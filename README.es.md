@@ -66,8 +66,8 @@ construyen automáticamente en cada push.
 El **AppImage** incluye Python + Qt + toda la app — sin instalar nada:
 
 ```bash
-chmod +x Bellum_Tool-*-x86_64.AppImage
-./Bellum_Tool-*-x86_64.AppImage
+chmod +x Bellum-*-x86_64.AppImage
+./Bellum-*-x86_64.AppImage
 ```
 
 O descarga el paquete nativo de tu distro:
