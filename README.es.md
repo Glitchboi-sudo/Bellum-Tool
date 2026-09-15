@@ -1,13 +1,8 @@
 <p align="center">
-  <pre>
-██████╗ ███████╗██╗     ██╗     ██╗   ██╗███╗   ███╗
-██╔══██╗██╔════╝██║     ██║     ██║   ██║████╗ ████║
-██████╔╝█████╗  ██║     ██║     ██║   ██║██╔████╔██║
-██╔══██╗██╔══╝  ██║     ██║     ██║   ██║██║╚██╔╝██║
-██████╔╝███████╗███████╗███████╗╚██████╔╝██║ ╚═╝ ██║
-╚═════╝ ╚══════╝╚══════╝╚══════╝ ╚═════╝ ╚═╝     ╚═╝
-              P A X   P A Y D R O I D   T O O L
-  </pre>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/bellum-logo-type-light.svg">
+    <img src=".github/assets/bellum-logo-type-dark.svg" alt="Bellum Tool" width="260">
+  </picture>
 </p>
 
 <p align="center">
