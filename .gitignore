@@ -1,0 +1,41 @@
+# --- Bellum Tool ---
+
+# Vendored / proprietary PAX tooling — NEVER publish (third-party, non-free)
+tmp/
+*.msi
+*.exe
+*.dll
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+*.egg
+
+# Virtualenvs
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging build output
+packaging/build/
+packaging/*.deb
+packaging/*.rpm
+packaging/*.AppImage
+packaging/*.pkg.tar.zst
+AppDir/
+*.AppImage
+
+# Tooling / editors
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.idea/
+.vscode/
+*.swp
+.DS_Store

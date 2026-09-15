@@ -1,0 +1,26 @@
+# Maintainer: Glitchboi-sudo
+pkgname=bellum-tool
+pkgver=0.3.0
+pkgrel=1
+pkgdesc="Native Linux (Qt6/PySide6) GUI to manage PAX PayDroid terminals over ADB"
+arch=('any')
+url="https://github.com/Glitchboi-sudo/Bellum-Tool"
+license=('GPL-3.0-or-later')
+depends=('python' 'pyside6')
+optdepends=('android-tools: fastboot support for flashing')
+makedepends=('python-setuptools' 'python-build' 'python-installer' 'python-wheel')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/Glitchboi-sudo/Bellum-Tool/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "$srcdir/Bellum-Tool-$pkgver"
+    python -m build --wheel --no-isolation
+}
+
+package() {
+    cd "$srcdir/Bellum-Tool-$pkgver"
+    python -m installer --destdir="$pkgdir" dist/*.whl
+    install -Dm644 packaging/bellum-tool.desktop "$pkgdir/usr/share/applications/bellum-tool.desktop"
+    install -Dm644 packaging/bellum-tool.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/bellum-tool.svg"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

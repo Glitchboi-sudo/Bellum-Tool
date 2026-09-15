@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b3a67"/>
+      <stop offset="1" stop-color="#1a2340"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="url(#bg)"/>
+  <!-- POS terminal glyph -->
+  <rect x="38" y="30" width="52" height="68" rx="6" fill="none" stroke="#8ab4ff" stroke-width="4"/>
+  <rect x="46" y="38" width="36" height="22" rx="3" fill="#8ab4ff" opacity="0.85"/>
+  <g fill="#8ab4ff">
+    <rect x="46" y="68" width="10" height="8" rx="2"/>
+    <rect x="59" y="68" width="10" height="8" rx="2"/>
+    <rect x="72" y="68" width="10" height="8" rx="2"/>
+    <rect x="46" y="80" width="10" height="8" rx="2"/>
+    <rect x="59" y="80" width="10" height="8" rx="2"/>
+    <rect x="72" y="80" width="10" height="8" rx="2"/>
+  </g>
+</svg>

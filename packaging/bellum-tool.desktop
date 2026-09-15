@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Bellum Tool
+GenericName=PAX PayDroid Manager
+Comment=Manage PAX PayDroid terminals over ADB
+Exec=bellum-tool
+Icon=bellum-tool
+Terminal=false
+Categories=Utility;System;Development;
+Keywords=PAX;PayDroid;ADB;POS;terminal;
+StartupWMClass=Bellum Tool
