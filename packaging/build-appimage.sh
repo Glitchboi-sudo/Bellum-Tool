@@ -22,5 +22,12 @@ printf '%s\n' "$WHEEL" > "$RECIPE/requirements.txt"
 mkdir -p "$OUT"
 ( cd "$OUT" && python-appimage build app -p "$PYVER" "$RECIPE" )
 
+# python-appimage names the output after the desktop `Name` ("Bellum Tool"),
+# which contains a space. Normalize spaces to underscores for clean asset names.
+for f in "$OUT"/*\ *.AppImage; do
+    [ -e "$f" ] || continue
+    mv -- "$f" "${f// /_}"
+done
+
 echo "AppImage(s) in: $OUT"
 ls -1 "$OUT"/*.AppImage
