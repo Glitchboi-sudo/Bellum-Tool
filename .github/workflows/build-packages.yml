@@ -164,3 +164,5 @@ jobs:
             artifacts/**/*.AppImage
             artifacts/**/*.pkg.tar.zst
           generate_release_notes: true
+          # Mark tags with a pre-release suffix (e.g. v0.3.0-alpha) as pre-releases.
+          prerelease: ${{ contains(github.ref_name, '-') }}
