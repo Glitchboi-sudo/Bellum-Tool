@@ -24,6 +24,12 @@
   <a href="README.pt.md">Português</a>
 </p>
 
+<p align="center">
+  <a href="https://buymeacoffee.com/glitchboi">
+    <img src="https://img.shields.io/badge/%E2%98%95%20Buy%20Me%20a%20Coffee-Support%20the%20project-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black" alt="Buy Me a Coffee" height="42" />
+  </a>
+</p>
+
 ---
 
 ## What is Bellum Tool?
@@ -176,15 +182,3 @@ through `pax_adb` and `fastboot` / `paydroidboot`.
 
 Copyright © 2026 **Glitchboi**. Distributed under the **[GNU General Public License
 v3.0 or later](LICENSE)** (GPL-3.0-or-later).
-
----
-
-## Support
-
-If Bellum Tool is useful to you, consider supporting its development:
-
-<p align="center">
-  <a href="https://buymeacoffee.com/glitchboi">
-    <img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Support-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy Me a Coffee" height="34" />
-  </a>
-</p>

@@ -24,6 +24,12 @@
   <strong>Português</strong>
 </p>
 
+<p align="center">
+  <a href="https://buymeacoffee.com/glitchboi">
+    <img src="https://img.shields.io/badge/%E2%98%95%20Buy%20Me%20a%20Coffee-Apoie%20o%20projeto-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black" alt="Buy Me a Coffee" height="42" />
+  </a>
+</p>
+
 ---
 
 ## O que é o Bellum Tool?
@@ -180,15 +186,3 @@ PAX através de `pax_adb` e `fastboot` / `paydroidboot`.
 
 Copyright © 2026 **Glitchboi**. Distribuído sob a **[Licença Pública Geral GNU v3.0
 ou posterior](LICENSE)** (GPL-3.0-or-later).
-
----
-
-## Apoie
-
-Se o Bellum Tool lhe for útil, considere apoiar o seu desenvolvimento:
-
-<p align="center">
-  <a href="https://buymeacoffee.com/glitchboi">
-    <img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Apoie-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy Me a Coffee" height="34" />
-  </a>
-</p>
