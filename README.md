@@ -35,11 +35,9 @@
 
 Bellum Tool is a **native Linux desktop app** (Qt6 / PySide6) to manage **PAX
 PayDroid** point-of-sale terminals (A910 / A920 / A930, D-series…) over ADB. It is a
-clean, modern front-end over [`pax_adb`](https://github.com/Glitchboi-sudo) — AOSP
-`adb` extended with PAX's `A_HDSK` handshake and its **six proprietary commands**
-(`syslog`, `systool`, `puk`, `sysver`, `unlink`, `getappinfo`) — plus `fastboot` /
-`paydroidboot`. It fills the same role as the Windows *PayDroid Tool*, but as a
-native desktop application.
+clean, modern front-end over [`pax_adb`](https://github.com/Glitchboi-sudo/pax_linux)
+plus `fastboot` / `paydroidboot`. It fills the same role as the Windows *PayDroid
+Tool*, but as a native desktop application.
 
 The sidebar has **5 sections** grouping **9 tool pages**:
 
@@ -85,7 +83,7 @@ not bundled):
 
 | You need… | Why | Install on the target |
 |---|---|---|
-| **`pax_adb`** binary | the transport to the terminal (auto-detected) | provided by you; see the Wiki |
+| **`pax_adb`** binary | the transport to the terminal (auto-detected) | [`Glitchboi-sudo/pax_linux`](https://github.com/Glitchboi-sudo/pax_linux) |
 | **`fastboot`** *(optional)* | only for the flashing module | `android-tools` (or `paydroidboot`) |
 
 ---
