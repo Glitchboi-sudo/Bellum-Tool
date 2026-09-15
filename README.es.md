@@ -31,18 +31,6 @@
 
 ---
 
-> **Software en beta.** Bellum Tool es funcional y está probado en headless, pero la
-> validación sobre hardware real conectado está pendiente. Espera asperezas y por
-> favor reporta lo que encuentres.
-
-> **Gestión neutra de dispositivos sobre equipo de tu propiedad.** Bellum **no**
-> incluye firmware, **ni** APKs empaquetadas, **ni** macros de "quitar tamper" o de
-> elusión de la seguridad de pago. Los paquetes críticos de seguridad/pago de PAX se
-> marcan y requieren confirmación reforzada. Úsalo de forma legal, solo sobre tu
-> propio equipo. Ver [Alcance y uso responsable](#alcance-y-uso-responsable).
-
----
-
 ## ¿Qué es Bellum Tool?
 
 Bellum Tool es una **app de escritorio nativa de Linux** (Qt6 / PySide6) para
@@ -55,17 +43,17 @@ mismo rol que la *PayDroid Tool* de Windows, pero como app de escritorio nativa.
 
 El menú lateral tiene **5 secciones** que agrupan **9 páginas de herramientas**:
 
-- 🖥️ **Resumen** — detección, estado online/no autorizado/offline, ficha `getprop`,
+- **Resumen** — detección, estado online/no autorizado/offline, ficha `getprop`,
   estado del sistema (batería, `/data`, resolución, uptime), exportar informe,
   reinicio a sistema/bootloader y ADB inalámbrico.
-- 📦 **Aplicaciones** — gestor de paquetes completo: listar/filtrar con versión,
+- **Aplicaciones** — gestor de paquetes completo: listar/filtrar con versión,
   instalar APK o carpeta, extraer/backup, desinstalar, activar/desactivar, limpiar
   datos, lanzar / forzar detención y permisos por app (conceder/revocar).
-- 📁 **Ficheros** — explorador remoto con push/pull y borrado (`unlink`).
-- 🩺 **Diagnóstico** — *Registros* (`logcat` o `syslog` de PAX), *Consola*
+- **Ficheros** — explorador remoto con push/pull y borrado (`unlink`).
+- **Diagnóstico** — *Registros* (`logcat` o `syslog` de PAX), *Consola*
   (`adb shell`), *Captura* (`screencap`), *Herramientas* (`screenrecord`,
   `bugreport`, `dumpsys`).
-- 🔧 **Mantenimiento** — *Flasheo* (front-end de `fastboot` con recetas por lotes
+- **Mantenimiento** — *Flasheo* (front-end de `fastboot` con recetas por lotes
   guardables), *Reciclaje* (wipe estándar), *Sistema PAX* (los comandos propietarios).
 
 ---

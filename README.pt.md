@@ -31,19 +31,6 @@
 
 ---
 
-> **Software em beta.** O Bellum Tool é funcional e testado em headless, mas a
-> validação em hardware real ligado ainda está pendente. Espere arestas por limar e
-> por favor reporte o que encontrar.
-
-> **Gestão neutra de dispositivos em equipamento de sua propriedade.** O Bellum
-> **não** inclui firmware, **nem** APKs empacotadas, **nem** macros de "remover
-> tamper" ou de contornar a segurança de pagamento. Os pacotes críticos de
-> segurança/pagamento da PAX são destacados e exigem confirmação reforçada. Use-o de
-> forma legal, apenas no seu próprio equipamento. Veja
-> [Escopo e uso responsável](#escopo-e-uso-responsável).
-
----
-
 ## O que é o Bellum Tool?
 
 O Bellum Tool é um **aplicativo de desktop nativo para Linux** (Qt6 / PySide6) para
@@ -57,17 +44,17 @@ desktop nativo.
 
 O menu lateral tem **5 seções** que agrupam **9 páginas de ferramentas**:
 
-- 🖥️ **Resumo** — deteção, estado online/não autorizado/offline, ficha `getprop`,
+- **Resumo** — deteção, estado online/não autorizado/offline, ficha `getprop`,
   estado do sistema (bateria, `/data`, resolução, uptime), exportar relatório,
   reinício para sistema/bootloader e ADB sem fios.
-- 📦 **Aplicativos** — gestor de pacotes completo: listar/filtrar com versão,
+- **Aplicativos** — gestor de pacotes completo: listar/filtrar com versão,
   instalar APK ou pasta, extrair/backup, desinstalar, ativar/desativar, limpar
   dados, iniciar / forçar paragem e permissões por app (conceder/revogar).
-- 📁 **Ficheiros** — explorador remoto com push/pull e eliminação (`unlink`).
-- 🩺 **Diagnóstico** — *Registos* (`logcat` ou `syslog` da PAX), *Consola*
+- **Ficheiros** — explorador remoto com push/pull e eliminação (`unlink`).
+- **Diagnóstico** — *Registos* (`logcat` ou `syslog` da PAX), *Consola*
   (`adb shell`), *Captura* (`screencap`), *Ferramentas* (`screenrecord`,
   `bugreport`, `dumpsys`).
-- 🔧 **Manutenção** — *Flash* (front-end do `fastboot` com receitas em lote
+- **Manutenção** — *Flash* (front-end do `fastboot` com receitas em lote
   guardáveis), *Reciclagem* (wipe padrão), *Sistema PAX* (os comandos proprietários).
 
 ---

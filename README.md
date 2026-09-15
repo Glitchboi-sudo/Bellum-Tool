@@ -31,18 +31,6 @@
 
 ---
 
-> **Beta software.** Bellum Tool is functional and tested headless, but hardware
-> validation against connected terminals is still pending. Expect rough edges and
-> please report anything you find.
-
-> **Neutral device management on hardware you own.** Bellum ships **no** firmware,
-> **no** bundled APKs and **no** "tamper-removal" or payment-security-bypass macros.
-> Critical PAX security/payment packages are flagged and gated behind reinforced
-> confirmation. Use it lawfully, only on your own equipment. See
-> [Scope & responsible use](#scope--responsible-use).
-
----
-
 ## What is Bellum Tool?
 
 Bellum Tool is a **native Linux desktop app** (Qt6 / PySide6) to manage **PAX
@@ -55,16 +43,16 @@ native desktop application.
 
 The sidebar has **5 sections** grouping **9 tool pages**:
 
-- 🖥️ **Overview** — detection, online/unauthorized/offline status, `getprop` sheet,
+- **Overview** — detection, online/unauthorized/offline status, `getprop` sheet,
   system status (battery, `/data`, resolution, uptime), report export, reboot to
   system/bootloader, and wireless ADB.
-- 📦 **Applications** — a full package manager: list/filter with versions, install
+- **Applications** — a full package manager: list/filter with versions, install
   APK or folder, extract/back up, uninstall, enable/disable, clear data, launch /
   force-stop, and per-app permissions (grant/revoke).
-- 📁 **Files** — remote browser with push/pull and delete (`unlink`).
-- 🩺 **Diagnostics** — *Logs* (`logcat` or PAX `syslog`), *Console* (`adb shell`),
+- **Files** — remote browser with push/pull and delete (`unlink`).
+- **Diagnostics** — *Logs* (`logcat` or PAX `syslog`), *Console* (`adb shell`),
   *Capture* (`screencap`), *Tools* (`screenrecord`, `bugreport`, `dumpsys`).
-- 🔧 **Maintenance** — *Flashing* (`fastboot` front-end with saveable batch recipes),
+- **Maintenance** — *Flashing* (`fastboot` front-end with saveable batch recipes),
   *Recycle* (standard wipe), *PAX System* (the proprietary commands).
 
 ---
