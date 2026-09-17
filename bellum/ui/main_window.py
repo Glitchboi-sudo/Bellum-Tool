@@ -80,6 +80,9 @@ class MainWindow(QMainWindow):
         # y las filas reflujan (FlowLayout), así que la ventana puede encogerse
         # mucho (incluso a ~1/4 de pantalla o en HiDPI) sin recortar contenido.
         self.setMinimumSize(360, 480)
+        # Estado del sidebar responsivo (se colapsa a solo iconos si la ventana
+        # es muy estrecha). None = aún sin aplicar; lo fija _apply_responsive.
+        self._compact: bool | None = None
 
         self._settings = QSettings("bellum", "bellum_tool")
         self._migrate_settings()
@@ -146,17 +149,18 @@ class MainWindow(QMainWindow):
     def _build_sidebar(self) -> QWidget:
         side = QWidget()
         side.setObjectName("Sidebar")
+        self._side = side
         side.setFixedWidth(224)
         lay = QVBoxLayout(side)
         lay.setContentsMargins(12, 18, 12, 14)
         lay.setSpacing(4)
 
-        title = QLabel("Bellum Tool")
-        title.setObjectName("AppTitle")
-        sub = QLabel("Gestión de terminales PAX")
-        sub.setObjectName("AppSub")
-        lay.addWidget(title)
-        lay.addWidget(sub)
+        self._side_title = QLabel("Bellum Tool")
+        self._side_title.setObjectName("AppTitle")
+        self._side_sub = QLabel("Gestión de terminales PAX")
+        self._side_sub.setObjectName("AppSub")
+        lay.addWidget(self._side_title)
+        lay.addWidget(self._side_sub)
         lay.addSpacing(10)
 
         self._nav = QListWidget()
@@ -167,14 +171,39 @@ class MainWindow(QMainWindow):
 
         self._theme_btn = QPushButton()
         self._theme_btn.clicked.connect(self._toggle_theme)
-        settings_btn = QPushButton("  Ajustes")
+        self._settings_btn = QPushButton("  Ajustes")
         settings_ic = icons.icon("settings", self._palette.text)
         if not settings_ic.isNull():
-            settings_btn.setIcon(settings_ic)
-        settings_btn.clicked.connect(self._open_settings)
+            self._settings_btn.setIcon(settings_ic)
+        self._settings_btn.clicked.connect(self._open_settings)
         lay.addWidget(self._theme_btn)
-        lay.addWidget(settings_btn)
+        lay.addWidget(self._settings_btn)
         return side
+
+    # ---- sidebar responsivo -------------------------------------------
+    def resizeEvent(self, event):  # noqa: N802
+        super().resizeEvent(event)
+        self._apply_responsive(self.width())
+
+    def _apply_responsive(self, width: int) -> None:
+        """Colapsa el sidebar a solo iconos en ventanas estrechas, para dejar el
+        máximo espacio al contenido (sin él, con 224px fijos, el contenido se
+        recortaba por debajo de ~600px de ancho)."""
+        compact = width < 640
+        if compact == self._compact:
+            return
+        self._compact = compact
+        self._side.setFixedWidth(64 if compact else 224)
+        self._side_title.setVisible(not compact)
+        self._side_sub.setVisible(not compact)
+        for i, page in enumerate(self._pages):
+            item = self._nav.item(i)
+            if item is not None:
+                item.setText("" if compact else f"  {page.title}")
+                item.setToolTip(page.title if compact else "")
+        self._settings_btn.setText("" if compact else "  Ajustes")
+        self._settings_btn.setToolTip("Ajustes" if compact else "")
+        self._update_theme_button()
 
     def _build_main(self) -> QWidget:
         container = QWidget()
@@ -303,8 +332,9 @@ class MainWindow(QMainWindow):
     def _update_theme_button(self) -> None:
         going_light = self._palette.name == "dark"
         concept = "sun" if going_light else "moon"
-        label = "  Tema claro" if going_light else "  Tema oscuro"
-        self._theme_btn.setText(label)
+        full = "  Tema claro" if going_light else "  Tema oscuro"
+        self._theme_btn.setText("" if self._compact else full)
+        self._theme_btn.setToolTip(full.strip() if self._compact else "")
         ic = icons.icon(concept, self._palette.text)
         if not ic.isNull():
             self._theme_btn.setIcon(ic)
