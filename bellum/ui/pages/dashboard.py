@@ -48,6 +48,7 @@ class DashboardPage(Page):
         super().__init__(ctx, parent)
         self._last_props: dict[str, str] = {}
         self._last_status: dict[str, str] = {}
+        self._via_pax = False
         root = QVBoxLayout(self)
         root.setContentsMargins(22, 18, 22, 22)
         root.setSpacing(16)
@@ -190,12 +191,22 @@ class DashboardPage(Page):
             return
 
         self._set_enabled(True)
+        self._via_pax = False
         self._status.setText("Leyendo propiedades…")
         self._empty.setText("Cargando…")
         self._busy.show()
         self.ctx.adb.getprops(self._on_props)
 
     def _on_props(self, props: dict[str, str]) -> None:
+        # Los terminales PAX de producción bloquean el shell de adbd, así que
+        # `getprop` (shell) vuelve vacío. Antes de darlo por desconectado,
+        # reintentamos por la vía PAX: `systool get sysprop <key>`, que sí
+        # responde en esos firmwares (igual que hace el PaydroidTool oficial).
+        if not props and not self._via_pax:
+            self._via_pax = True
+            self._load_props_via_pax()
+            return
+
         self._busy.hide()
         self._last_props = props
         if not props:
@@ -213,7 +224,11 @@ class DashboardPage(Page):
         self._substatus.setText(self.ctx.adb.serial)
         self._empty.hide()
         self._replace_badge("device")
-        self._load_status()
+        # El estado del sistema (batería/almacenamiento/pantalla) se lee por
+        # shell; en terminales bloqueados no está disponible, así que solo se
+        # intenta cuando las propiedades vinieron por shell.
+        if not self._via_pax:
+            self._load_status()
 
         pal = self.ctx.palette
         row = 0
@@ -243,6 +258,35 @@ class DashboardPage(Page):
         if shown == 0:
             self._empty.setText("El dispositivo respondió pero sin propiedades reconocidas.")
             self._empty.show()
+
+    # ---- fallback PAX: propiedades vía systool (shell bloqueado) ----------
+    def _load_props_via_pax(self) -> None:
+        """Lee las propiedades destacadas con `systool get sysprop <key>`.
+
+        Se usa cuando `shell getprop` no devuelve nada (shell bloqueado). Cada
+        clave es una ida y vuelta; se acumulan y, al terminar todas, se
+        reutiliza `_on_props` con el dict resultante.
+        """
+        self._status.setText("Leyendo propiedades (systool)…")
+        self._pax_props: dict[str, str] = {}
+        self._pax_remaining = len(_FEATURED)
+        for key, _ in _FEATURED:
+            self.ctx.adb.run(
+                ["systool", "get", "sysprop", key],
+                lambda r, k=key: self._on_pax_prop(k, r),
+            )
+
+    def _on_pax_prop(self, key: str, res: CommandResult) -> None:
+        # Salida de systool: '.<key>=<valor>' (una línea) + '[SYSTOOL:0] ok'.
+        for raw in res.stdout.splitlines():
+            line = raw.strip()
+            if line.startswith(".") and "=" in line:
+                k, _, v = line[1:].partition("=")
+                if k == key and v.strip():
+                    self._pax_props[key] = v.strip()
+        self._pax_remaining -= 1
+        if self._pax_remaining == 0:
+            self._on_props(self._pax_props)
 
     def _reboot(self, mode: str) -> None:
         if not self.ctx.adb.serial:
