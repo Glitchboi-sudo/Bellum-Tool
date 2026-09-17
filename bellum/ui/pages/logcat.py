@@ -7,11 +7,14 @@ solo cambia el comando que se lanza: `logcat -v time *:P` o `syslog`
 
 from __future__ import annotations
 
+import re
+
 from PySide6.QtCore import QProcess
+from PySide6.QtGui import QColor, QFont, QSyntaxHighlighter, QTextCharFormat
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFileDialog,
-    QHBoxLayout,
     QLineEdit,
     QPlainTextEdit,
     QVBoxLayout,
@@ -21,6 +24,55 @@ from .. import icons
 from ..widgets import Page, flow_row, icon_button
 
 _MAX_BLOCKS = 5000  # límite de líneas en pantalla para no consumir memoria sin fin
+
+# Cabecera típica de una línea logcat/syslog: "<nivel>/<tag>( <pid>):"
+#   E/DcSwitchStateMachine-0( 1380): mensaje…
+_LOG_RE = re.compile(r"([VDIWEF])/(.+?)\(\s*(\d+)\s*\):")
+
+
+class LogHighlighter(QSyntaxHighlighter):
+    """Colorea cada línea de log por nivel para hacer legible el volcado denso.
+
+    Atenúa el timestamp y el pid, resalta el tag, colorea la letra de nivel
+    (V/D/I/W/E/F) y tiñe el mensaje en warnings/errores. El texto sigue siendo
+    plano (copiar/guardar no se ven afectados)."""
+
+    def __init__(self, document, palette):
+        super().__init__(document)
+
+        def fmt(color: str, bold: bool = False) -> QTextCharFormat:
+            f = QTextCharFormat()
+            f.setForeground(QColor(color))
+            if bold:
+                f.setFontWeight(QFont.Weight.Bold)
+            return f
+
+        self._dim = fmt(palette.text_dim)
+        self._tag = fmt(palette.accent)
+        self._lvl = {
+            "V": fmt(palette.text_dim, True),
+            "D": fmt(palette.accent, True),
+            "I": fmt(palette.ok, True),
+            "W": fmt(palette.warn, True),
+            "E": fmt(palette.danger, True),
+            "F": fmt(palette.danger, True),
+        }
+        # Solo se tiñe el mensaje en niveles llamativos (warn/error/fatal).
+        self._msg = {"W": fmt(palette.warn), "E": fmt(palette.danger), "F": fmt(palette.danger)}
+
+    def highlightBlock(self, text: str) -> None:
+        m = _LOG_RE.search(text)
+        if not m:
+            return
+        lvl = m.group(1)
+        if m.start(1) > 0:
+            self.setFormat(0, m.start(1), self._dim)  # timestamp/cabecera
+        self.setFormat(m.start(1), 1, self._lvl.get(lvl, self._dim))  # nivel
+        self.setFormat(m.start(2), len(m.group(2)), self._tag)  # tag
+        self.setFormat(m.start(3), len(m.group(3)), self._dim)  # pid
+        msg_fmt = self._msg.get(lvl)
+        if msg_fmt is not None:
+            self.setFormat(m.end(), len(text) - m.end(), msg_fmt)  # mensaje
 
 
 class LogcatPage(Page):
@@ -54,9 +106,13 @@ class LogcatPage(Page):
         clear_btn.clicked.connect(self._clear)
         save_btn = icon_button("save", ctx.palette.text, "Guardar…")
         save_btn.clicked.connect(self._save)
+        self._color = QCheckBox("Colorear")
+        self._color.setChecked(True)
+        self._color.toggled.connect(self._toggle_color)
         root.addWidget(
             flow_row(
-                self._toggle, self._source, self._priority, self._filter, clear_btn, save_btn
+                self._toggle, self._source, self._priority, self._filter,
+                self._color, clear_btn, save_btn,
             )
         )
 
@@ -67,6 +123,9 @@ class LogcatPage(Page):
         self._view.setMaximumBlockCount(_MAX_BLOCKS)
         self._view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         root.addWidget(self._view, 1)
+
+        # Pretty-print: colorea por nivel (se puede desactivar con «Colorear»).
+        self._highlighter = LogHighlighter(self._view.document(), ctx.palette)
 
         self._all_lines: list[str] = []
 
@@ -135,6 +194,10 @@ class LogcatPage(Page):
         for line in self._all_lines[-_MAX_BLOCKS:]:
             if not needle or needle in line.lower():
                 self._view.appendPlainText(line)
+
+    def _toggle_color(self, on: bool) -> None:
+        # Conectar/desconectar el highlighter del documento activa o quita el color.
+        self._highlighter.setDocument(self._view.document() if on else None)
 
     def _clear(self) -> None:
         self._all_lines.clear()
