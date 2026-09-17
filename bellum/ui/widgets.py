@@ -184,6 +184,12 @@ def flow_row(*widgets: QWidget, hspacing: int = 8, vspacing: int = 8) -> QWidget
     lay = FlowLayout(w, margin=0, hspacing=hspacing, vspacing=vspacing)
     for x in widgets:
         lay.addWidget(x)
+    # Sin height-for-width en la política del contenedor, el QVBoxLayout padre
+    # reserva la altura de UNA sola línea y las filas se solapan al reflujar.
+    sp = w.sizePolicy()
+    sp.setHeightForWidth(True)
+    sp.setVerticalPolicy(QSizePolicy.Policy.Minimum)
+    w.setSizePolicy(sp)
     return w
 
 

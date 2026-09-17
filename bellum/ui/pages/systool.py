@@ -1,24 +1,32 @@
-"""Comandos propietarios de PAX: systool y getappinfo.
+"""Panel completo de `systool` (comandos propietarios de PAX) + PUK y appinfo.
 
-- `systool <subcomando> [args] [fichero]` — ejecuta `shell:systool …` en el
-  terminal. Los subcomandos con fichero (update/write/install/apn/puk) toman un
-  fichero local como último argumento; el binario lo sube a /data/local/tmp,
-  ejecuta y lo borra (todo transparente aquí).
-- `getappinfo [<local>]` — descarga /data/resource/public/appinfo.bin.
+`systool` actúa sobre el firmware del terminal. La página lo organiza por
+categorías siguiendo la referencia de PAXDROID SYSTOOL v2.0:
 
-Estos comandos actúan sobre el firmware del terminal. No hay presets de bypass;
-el usuario compone el subcomando de systool que necesita.
+  get       leer información (device-info, sysver, sysprop…)          — seguro
+  set       configurar (time, timezone, language, customer, sysprop…) — persiste
+  install   instalar apps (app / persist-app), sube el fichero local
+  write     grabar blobs (puk, apn, whitelist, pubkey, licencia)
+  update    actualizar imágenes (os, bootlogo, resource, bootanimation) — ⚠ brick
+  remove    eliminar (datas, rki, package, persist-app, whitelist…)   — ⚠ destructivo
+  startproc lanzar una actividad
+  control   comandos internos por id (1..5)                           — ⚠ avanzado
+  reboot    reiniciar la terminal                                     — ⚠
+
+Los subcomandos con fichero (install/write/update, y puk/apn) toman un fichero
+local como último argumento: el binario `pax_adb` lo sube a /data/local/tmp,
+ejecuta systool contra él y lo borra. Todo eso es transparente aquí.
 """
 
 from __future__ import annotations
 
-import shlex
-
+from PySide6.QtCore import QDateTime
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPlainTextEdit,
     QVBoxLayout,
     QWidget,
@@ -27,19 +35,17 @@ from PySide6.QtWidgets import (
 from ...core.adb import CommandResult
 from ..widgets import Card, Page, flow_row, hint, icon_button
 
-# Subcomandos de systool que toman un fichero local como último argumento.
-_FILE_BASED = {"update", "write", "install", "apn", "puk"}
+# Categorías cuyo primer token hace que pax_adb suba el fichero (último arg).
+_FILE_CATS = {"install", "write", "update"}
 
-# Presets frecuentes (rellenan el campo de argumentos; no se ejecutan solos).
-_PRESETS = [
-    ("Comando systool…", ""),
-    ("getversion", "getversion"),
-    ("puk write (necesita fichero)", "puk write"),
-    ("apn (necesita fichero)", "apn"),
-    ("update (necesita fichero)", "update"),
-    ("install (necesita fichero)", "install"),
-    ("remove persist-app <ruta>", "remove persist-app "),
-]
+# control <id>: significado de cada id (referencia OsManagerService.doControl).
+_CONTROL_INFO = {
+    "1": "Refresca perfil de Customer y reinicia el Launcher (sin mensaje).",
+    "2": "App Download finished — cierra colas de instalación automática.",
+    "3": "Puk download completed — afecta el entorno seguro. Requiere reinicio.",
+    "4": "System update completed — marca la OTA como terminada.",
+    "5": "Finaliza provisión; intenta limpiar SIDs (credenciales lockscreen).",
+}
 
 
 def _hrow(*widgets: QWidget, stretch_index: int | None = None) -> QWidget:
@@ -62,82 +68,19 @@ class SystoolPage(Page):
 
         root.addWidget(
             hint(
-                "Comandos propietarios de PAX que actúan sobre el firmware del terminal. "
-                "Requieren un terminal con soporte de systool en su firmware."
+                "Comandos propietarios de PAX (systool) que actúan sobre el firmware. "
+                "Requieren un terminal con soporte de systool. Los marcados con ⚠ son "
+                "destructivos o pueden inutilizar el terminal: pide confirmación."
             )
         )
 
-        # --- systool ---
-        systool_card = Card("systool (comando remoto)")
-        self._preset = QComboBox()
-        for label, value in _PRESETS:
-            self._preset.addItem(label, value)
-        self._preset.activated.connect(self._apply_preset)
-        self._args = QLineEdit()
-        self._args.setPlaceholderText("argumentos de systool (p. ej. puk write, getversion)")
-        self._args.returnPressed.connect(self._run_systool)
-        run_btn = icon_button("run", ctx.palette.accent_text, "Ejecutar", object_name="Primary")
-        run_btn.clicked.connect(self._run_systool)
-        systool_card.add(_hrow(self._preset, self._args, run_btn, stretch_index=1))
-
-        self._file = QLineEdit()
-        self._file.setPlaceholderText("fichero local (solo para update/write/install/apn/puk)…")
-        browse = icon_button("open", ctx.palette.text, "Examinar…")
-        browse.clicked.connect(self._browse_file)
-        clear_file = icon_button("remove", ctx.palette.text, tooltip="Quitar fichero")
-        clear_file.setFixedWidth(40)
-        clear_file.clicked.connect(lambda: self._file.clear())
-        systool_card.add(
-            _hrow(QLabel("Fichero:"), self._file, browse, clear_file, stretch_index=1)
-        )
-        systool_card.add(
-            hint(
-                "Los subcomandos update/write/install/apn/puk necesitan un fichero: se sube "
-                "a /data/local/tmp, se ejecuta systool contra él y se borra automáticamente."
-            )
-        )
-        root.addWidget(systool_card)
-
-        # --- PUK (puktools) ---
-        puk_card = Card("PUK (paquetes puktools)")
-        self._puk_sub = QComboBox()
-        self._puk_sub.addItems(["list", "install", "uninstall"])
-        self._puk_sub.currentTextChanged.connect(self._on_puk_sub)
-        self._puk_arg = QLineEdit()
-        puk_browse = icon_button("open", ctx.palette.text, "Examinar…")
-        puk_browse.clicked.connect(self._browse_puk)
-        self._puk_browse = puk_browse
-        puk_run = icon_button("run", ctx.palette.accent_text, "Ejecutar", object_name="Primary")
-        puk_run.clicked.connect(self._run_puk)
-        puk_card.add(
-            _hrow(
-                QLabel("Acción:"), self._puk_sub, self._puk_arg, puk_browse, puk_run,
-                stretch_index=2,
-            )
-        )
-        puk_card.add(
-            hint(
-                "list: enumera los paquetes PUK · install: sube e instala un fichero .puk · "
-                "uninstall: elimina por nombre de paquete."
-            )
-        )
-        root.addWidget(puk_card)
-        self._on_puk_sub("list")
-
-        # --- Info del terminal (sysver + appinfo) ---
-        info_card = Card("Info del terminal")
-        sysver_btn = icon_button("tools", ctx.palette.text, "Ver versiones (sysver)")
-        sysver_btn.clicked.connect(self._sysver)
-        appinfo_btn = icon_button("download", ctx.palette.text, "Descargar appinfo.bin…")
-        appinfo_btn.clicked.connect(self._get_appinfo)
-        info_card.add(_hrow(sysver_btn, appinfo_btn))
-        info_card.add(
-            hint(
-                "sysver: versiones de firmware (androidver/apbootver/spver). "
-                "appinfo: descarga /data/resource/public/appinfo.bin."
-            )
-        )
-        root.addWidget(info_card)
+        root.addWidget(self._build_get_card(ctx))
+        root.addWidget(self._build_set_card(ctx))
+        root.addWidget(self._build_files_card(ctx))
+        root.addWidget(self._build_remove_card(ctx))
+        root.addWidget(self._build_advanced_card(ctx))
+        root.addWidget(self._build_puk_card(ctx))
+        root.addWidget(self._build_info_card(ctx))
 
         # --- consola ---
         self._out = QPlainTextEdit()
@@ -146,18 +89,360 @@ class SystoolPage(Page):
         self._out.setPlaceholderText("La salida de systool/puk/sysver/appinfo aparecerá aquí…")
         root.addWidget(self._out, 1)
 
-    # ------------------------------------------------------------------
-    def _apply_preset(self, index: int) -> None:
-        value = self._preset.itemData(index)
-        if value:
-            self._args.setText(value)
-            self._args.setFocus()
-        self._preset.setCurrentIndex(0)
+    # ==================================================================
+    # Construcción de tarjetas
+    # ==================================================================
+    def _build_get_card(self, ctx) -> Card:
+        card = Card("Leer (get) — seguro")
+        row_btns = []
+        for label, sub in (
+            ("device-info", ["get", "device-info"]),
+            ("sysver", ["get", "sysver"]),
+            ("isNewScannerActive", ["get", "isNewScannerActive"]),
+        ):
+            b = icon_button("tools", ctx.palette.text, label)
+            b.clicked.connect(lambda _=False, a=sub: self._exec(a))
+            row_btns.append(b)
+        card.add(flow_row(*row_btns))
 
-    def _browse_file(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Fichero para systool", "", "Todos (*)")
+        self._getprop = QLineEdit()
+        self._getprop.setPlaceholderText("propiedad (p. ej. ro.serialno, ro.build.version.release)…")
+        getprop_btn = icon_button("run", ctx.palette.accent_text, "Leer", object_name="Primary")
+
+        def read_prop() -> None:
+            key = self._getprop.text().strip()
+            if not key:
+                self.ctx.notify("Escribe una propiedad.", "warn")
+                return
+            self._exec(["get", "sysprop", key])
+
+        getprop_btn.clicked.connect(read_prop)
+        self._getprop.returnPressed.connect(read_prop)
+        card.add(_hrow(QLabel("sysprop:"), self._getprop, getprop_btn, stretch_index=1))
+        return card
+
+    def _build_set_card(self, ctx) -> Card:
+        card = Card("Configurar (set) — persiste tras reinicio")
+
+        # time (con botón "Ahora")
+        self._set_time = QLineEdit()
+        self._set_time.setPlaceholderText("YYYY/MM/DD-HH:MM:SS")
+        now_btn = icon_button("refresh", ctx.palette.text, "Ahora")
+        now_btn.clicked.connect(
+            lambda: self._set_time.setText(
+                QDateTime.currentDateTime().toString("yyyy/MM/dd-HH:mm:ss")
+            )
+        )
+        time_run = self._mk_run(lambda: ["set", "time", self._set_time.text().strip()],
+                                need=self._set_time)
+        card.add(_hrow(QLabel("time:"), self._set_time, now_btn, time_run, stretch_index=1))
+
+        self._set_tz = self._simple_set_row(card, "timezone:", "America/Mazatlan", "timezone")
+        self._set_lang = self._simple_set_row(card, "language:", "es-MX / en-US", "language")
+        self._set_customer = self._simple_set_row(card, "customer:", "0xff", "customer")
+
+        # sysprop set (key + value) — potencialmente peligroso
+        self._sp_key = QLineEdit()
+        self._sp_key.setPlaceholderText("clave")
+        self._sp_val = QLineEdit()
+        self._sp_val.setPlaceholderText("valor")
+        sp_btn = icon_button("run", ctx.palette.accent_text, "Escribir", object_name="Primary")
+
+        def set_prop() -> None:
+            k = self._sp_key.text().strip()
+            v = self._sp_val.text().strip()
+            if not k:
+                self.ctx.notify("Escribe la clave de la propiedad.", "warn")
+                return
+            self._exec(
+                ["set", "sysprop", k, v],
+                confirm=(
+                    "set sysprop",
+                    f"Vas a escribir la propiedad del sistema:\n\n  {k} = {v}\n\n"
+                    "Cambiar propiedades del sistema puede alterar el comportamiento "
+                    "del terminal. ¿Continuar?",
+                ),
+            )
+
+        sp_btn.clicked.connect(set_prop)
+        card.add(_hrow(QLabel("sysprop:"), self._sp_key, self._sp_val, sp_btn, stretch_index=1))
+
+        # mtp on/off <token>
+        self._mtp_mode = QComboBox()
+        self._mtp_mode.addItems(["on", "off"])
+        self._mtp_token = QLineEdit()
+        self._mtp_token.setPlaceholderText("token")
+        mtp_btn = self._mk_run(
+            lambda: ["set", "mtp", self._mtp_mode.currentText(), self._mtp_token.text().strip()],
+            need=self._mtp_token,
+        )
+        card.add(_hrow(QLabel("mtp:"), self._mtp_mode, self._mtp_token, mtp_btn, stretch_index=2))
+        return card
+
+    def _build_files_card(self, ctx) -> Card:
+        card = Card("Ficheros: install / write / update")
+
+        # install <app|persist-app> <apk>
+        self._inst_sub = QComboBox()
+        self._inst_sub.addItems(["app", "persist-app"])
+        self._inst_file = QLineEdit()
+        self._inst_file.setPlaceholderText("APK local…")
+        inst_browse = icon_button("open", ctx.palette.text, "Examinar…")
+        inst_browse.clicked.connect(lambda: self._pick(self._inst_file, "APK (*.apk);;Todos (*)"))
+        inst_run = self._mk_run(
+            lambda: ["install", self._inst_sub.currentText(), self._inst_file.text().strip()],
+            need=self._inst_file,
+        )
+        card.add(_hrow(QLabel("install:"), self._inst_sub, self._inst_file, inst_browse, inst_run,
+                       stretch_index=2))
+
+        # write <sub> <file>
+        self._wr_sub = QComboBox()
+        self._wr_sub.addItems(
+            ["puk", "apn", "uninstall_whitelist", "customer-pubkey", "scan-license"]
+        )
+        self._wr_file = QLineEdit()
+        self._wr_file.setPlaceholderText("fichero local…")
+        wr_browse = icon_button("open", ctx.palette.text, "Examinar…")
+        wr_browse.clicked.connect(lambda: self._pick(self._wr_file, "Todos (*)"))
+        wr_run = self._mk_run(
+            lambda: ["write", self._wr_sub.currentText(), self._wr_file.text().strip()],
+            need=self._wr_file,
+        )
+        card.add(_hrow(QLabel("write:"), self._wr_sub, self._wr_file, wr_browse, wr_run,
+                       stretch_index=2))
+
+        # update <sub> <file>  — ⚠ brick
+        self._up_sub = QComboBox()
+        self._up_sub.addItems(["os", "bootlogo", "resource", "bootanimation"])
+        self._up_file = QLineEdit()
+        self._up_file.setPlaceholderText("imagen local…")
+        up_browse = icon_button("open", ctx.palette.text, "Examinar…")
+        up_browse.clicked.connect(lambda: self._pick(self._up_file, "Todos (*)"))
+        up_run = icon_button("run", ctx.palette.accent_text, "Actualizar ⚠", object_name="Primary")
+
+        def do_update() -> None:
+            f = self._up_file.text().strip()
+            sub = self._up_sub.currentText()
+            if not f:
+                self.ctx.notify("Selecciona la imagen a aplicar.", "warn")
+                return
+            self._exec(
+                ["update", sub, f],
+                confirm=(
+                    "update — riesgo de brick",
+                    f"Vas a aplicar update {sub}:\n\n  {f}\n\n"
+                    "⚠ Una imagen incorrecta o mal empaquetada puede INUTILIZAR (brick) "
+                    "el terminal. Usa solo imágenes oficiales y con respaldo. ¿Continuar?",
+                ),
+            )
+
+        up_run.clicked.connect(do_update)
+        card.add(_hrow(QLabel("update:"), self._up_sub, self._up_file, up_browse, up_run,
+                       stretch_index=2))
+        card.add(
+            hint(
+                "install/write/update suben el fichero local al terminal y ejecutan systool "
+                "contra él. update puede brickear: usa imágenes oficiales."
+            )
+        )
+        return card
+
+    def _build_remove_card(self, ctx) -> Card:
+        card = Card("Eliminar (remove) — ⚠ destructivo")
+
+        # Botones sin argumento (con confirmación)
+        no_arg = [
+            ("remove datas", ["remove", "datas"], "Borra datos (limpieza)."),
+            ("remove rki", ["remove", "rki"], "Elimina RKI (Remote Key Injection)."),
+            ("remove unsigned-apps", ["remove", "unsigned-apps"], "Limpia apps no firmadas."),
+            ("remove uninstall_whitelist", ["remove", "uninstall_whitelist"], "Quita la whitelist."),
+        ]
+        btns = []
+        for label, args, why in no_arg:
+            b = icon_button("remove", ctx.palette.text, label)
+            b.setObjectName("Danger")
+            b.clicked.connect(
+                lambda _=False, a=args, lbl=label, w=why: self._exec(
+                    a, confirm=(lbl, f"{w}\n\nEsta acción es destructiva. ¿Continuar?")
+                )
+            )
+            btns.append(b)
+        card.add(flow_row(*btns))
+
+        # remove package <name>
+        self._rm_pkg = QLineEdit()
+        self._rm_pkg.setPlaceholderText("nombre del paquete (com.ejemplo.app)…")
+        rm_pkg_btn = icon_button("remove", ctx.palette.text, "Desinstalar")
+        rm_pkg_btn.setObjectName("Danger")
+        rm_pkg_btn.clicked.connect(
+            lambda: self._exec_arg(
+                self._rm_pkg, lambda v: ["remove", "package", v],
+                confirm_title="remove package",
+                confirm_body=lambda v: f"Vas a desinstalar el paquete:\n\n  {v}\n\n¿Continuar?",
+            )
+        )
+        card.add(_hrow(QLabel("package:"), self._rm_pkg, rm_pkg_btn, stretch_index=1))
+
+        # remove persist-app <path>
+        self._rm_persist = QLineEdit()
+        self._rm_persist.setPlaceholderText("ruta de la app persistente (/data/resource/app/…)…")
+        rm_persist_btn = icon_button("remove", ctx.palette.text, "Eliminar")
+        rm_persist_btn.setObjectName("Danger")
+        rm_persist_btn.clicked.connect(
+            lambda: self._exec_arg(
+                self._rm_persist, lambda v: ["remove", "persist-app", v],
+                confirm_title="remove persist-app",
+                confirm_body=lambda v: f"Vas a eliminar la app persistente:\n\n  {v}\n\n¿Continuar?",
+            )
+        )
+        card.add(_hrow(QLabel("persist-app:"), self._rm_persist, rm_persist_btn, stretch_index=1))
+        return card
+
+    def _build_advanced_card(self, ctx) -> Card:
+        card = Card("Avanzado: startproc / control / reboot — ⚠")
+
+        # startproc Activity <pkg> <activity>
+        self._sp_pkg = QLineEdit()
+        self._sp_pkg.setPlaceholderText("packageName")
+        self._sp_act = QLineEdit()
+        self._sp_act.setPlaceholderText("ActivityName")
+        sp_run = icon_button("play", ctx.palette.text, "Lanzar")
+
+        def start_proc() -> None:
+            pkg = self._sp_pkg.text().strip()
+            act = self._sp_act.text().strip()
+            if not pkg or not act:
+                self.ctx.notify("Indica packageName y ActivityName.", "warn")
+                return
+            self._exec(["startproc", "Activity", pkg, act])
+
+        sp_run.clicked.connect(start_proc)
+        card.add(_hrow(QLabel("startproc:"), self._sp_pkg, self._sp_act, sp_run, stretch_index=1))
+
+        # control <id>
+        self._ctrl_id = QComboBox()
+        self._ctrl_id.addItems(list(_CONTROL_INFO.keys()))
+        self._ctrl_id.currentTextChanged.connect(self._on_ctrl_id)
+        ctrl_run = icon_button("run", ctx.palette.text, "Ejecutar control ⚠")
+        ctrl_run.clicked.connect(self._run_control)
+        card.add(_hrow(QLabel("control id:"), self._ctrl_id, ctrl_run))
+        self._ctrl_hint = hint("")
+        card.add(self._ctrl_hint)
+        self._on_ctrl_id(self._ctrl_id.currentText())
+
+        # reboot
+        reboot_btn = icon_button("reboot", ctx.palette.text, "systool reboot ⚠")
+        reboot_btn.setObjectName("Danger")
+        reboot_btn.clicked.connect(
+            lambda: self._exec(
+                ["reboot"],
+                confirm=("systool reboot", "Se reiniciará la terminal ahora. ¿Continuar?"),
+            )
+        )
+        card.add(flow_row(reboot_btn))
+        return card
+
+    def _build_puk_card(self, ctx) -> Card:
+        card = Card("PUK (paquetes puktools)")
+        self._puk_sub = QComboBox()
+        self._puk_sub.addItems(["list", "install", "uninstall"])
+        self._puk_sub.currentTextChanged.connect(self._on_puk_sub)
+        self._puk_arg = QLineEdit()
+        self._puk_browse = icon_button("open", ctx.palette.text, "Examinar…")
+        self._puk_browse.clicked.connect(self._browse_puk)
+        puk_run = icon_button("run", ctx.palette.accent_text, "Ejecutar", object_name="Primary")
+        puk_run.clicked.connect(self._run_puk)
+        card.add(_hrow(QLabel("Acción:"), self._puk_sub, self._puk_arg, self._puk_browse, puk_run,
+                       stretch_index=2))
+        card.add(
+            hint(
+                "list: enumera los paquetes PUK · install: sube e instala un .puk · "
+                "uninstall: elimina por nombre de paquete."
+            )
+        )
+        self._on_puk_sub("list")
+        return card
+
+    def _build_info_card(self, ctx) -> Card:
+        card = Card("Info del terminal")
+        sysver_btn = icon_button("tools", ctx.palette.text, "Ver versiones (pax_adb sysver)")
+        sysver_btn.clicked.connect(self._sysver)
+        appinfo_btn = icon_button("download", ctx.palette.text, "Descargar appinfo.bin…")
+        appinfo_btn.clicked.connect(self._get_appinfo)
+        card.add(flow_row(sysver_btn, appinfo_btn))
+        card.add(
+            hint(
+                "sysver: versiones de firmware (androidver/apbootver/spver). "
+                "appinfo: descarga /data/resource/public/appinfo.bin."
+            )
+        )
+        return card
+
+    # ==================================================================
+    # Helpers de construcción/ejecución
+    # ==================================================================
+    def _simple_set_row(self, card: Card, label: str, placeholder: str, key: str) -> QLineEdit:
+        """Fila 'set <key> <valor>' con un solo campo."""
+        field = QLineEdit()
+        field.setPlaceholderText(placeholder)
+        btn = self._mk_run(lambda: ["set", key, field.text().strip()], need=field)
+        card.add(_hrow(QLabel(label), field, btn, stretch_index=1))
+        return field
+
+    def _mk_run(self, build_args, need: QLineEdit | None = None):
+        """Crea un botón 'Ejecutar' que valida `need` y ejecuta build_args()."""
+        btn = icon_button("run", self.ctx.palette.accent_text, "Ejecutar", object_name="Primary")
+
+        def run() -> None:
+            if need is not None and not need.text().strip():
+                self.ctx.notify("Falta un valor.", "warn")
+                return
+            self._exec(build_args())
+
+        btn.clicked.connect(run)
+        if need is not None:
+            need.returnPressed.connect(run)
+        return btn
+
+    def _exec_arg(self, field: QLineEdit, build_args, confirm_title=None, confirm_body=None) -> None:
+        v = field.text().strip()
+        if not v:
+            self.ctx.notify("Falta un valor.", "warn")
+            return
+        confirm = None
+        if confirm_title and confirm_body:
+            confirm = (confirm_title, confirm_body(v))
+        self._exec(build_args(v), confirm=confirm)
+
+    def _exec(self, sub_args: list[str], confirm: tuple[str, str] | None = None) -> None:
+        """Ejecuta `systool <sub_args…>`. Si `confirm` está, pide confirmación."""
+        if not self.ctx.adb.serial:
+            self.ctx.notify("Sin dispositivo seleccionado.", "warn")
+            return
+        # Ningún argumento vacío (p. ej. token/valor faltante en un 'set').
+        if any(a == "" for a in sub_args):
+            self.ctx.notify("Faltan argumentos para el comando.", "warn")
+            return
+        if confirm is not None and not self._confirm(*confirm):
+            return
+        args = ["systool"] + sub_args
+        self._out.appendPlainText("$ pax_adb " + " ".join(args))
+        self.ctx.adb.run(args, self._log, merge_stderr=True)
+
+    def _confirm(self, title: str, body: str) -> bool:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle(title)
+        box.setText(body)
+        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        return box.exec() == QMessageBox.StandardButton.Yes
+
+    def _pick(self, field: QLineEdit, file_filter: str) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Seleccionar fichero", "", file_filter)
         if path:
-            self._file.setText(path)
+            field.setText(path)
 
     def _log(self, res: CommandResult) -> None:
         text = (res.text or "(sin salida)").rstrip()
@@ -166,57 +451,24 @@ class SystoolPage(Page):
             self._out.appendPlainText(f"[exit {res.returncode}]")
         self._out.appendPlainText("")
 
-    def _run_systool(self) -> None:
-        if not self.ctx.adb.serial:
-            self.ctx.notify("Sin dispositivo seleccionado.", "warn")
-            return
-        raw = self._args.text().strip()
-        if not raw:
-            self.ctx.notify("Escribe un subcomando de systool.", "warn")
-            return
-        try:
-            tokens = shlex.split(raw)
-        except ValueError as exc:
-            self.ctx.notify(f"Argumentos inválidos: {exc}", "error")
-            return
+    # ---- control ----
+    def _on_ctrl_id(self, cid: str) -> None:
+        self._ctrl_hint.setText(f"control {cid}: {_CONTROL_INFO.get(cid, '')}")
 
-        file_path = self._file.text().strip()
-        sub = tokens[0] if tokens else ""
-        if sub in _FILE_BASED and not file_path:
-            self.ctx.notify(
-                f"El subcomando '{sub}' necesita un fichero (usa «Examinar…»).", "warn"
-            )
-            return
-
-        args = ["systool"] + tokens
-        if file_path:
-            args.append(file_path)
-        self._out.appendPlainText("$ pax_adb " + " ".join(args))
-        self.ctx.adb.run(args, self._log, merge_stderr=True)
-
-    def _get_appinfo(self) -> None:
-        if not self.ctx.adb.serial:
-            self.ctx.notify("Sin dispositivo seleccionado.", "warn")
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Guardar appinfo.bin", "appinfo.bin", "Binario (*.bin);;Todos (*)"
+    def _run_control(self) -> None:
+        cid = self._ctrl_id.currentText()
+        self._exec(
+            ["control", cid],
+            confirm=(
+                f"control {cid}",
+                f"{_CONTROL_INFO.get(cid, '')}\n\n"
+                "Son comandos internos del OsManager y pueden afectar el entorno "
+                "seguro o la provisión. ¿Continuar?",
+            ),
         )
-        if not path:
-            return
-        self._out.appendPlainText(f"$ pax_adb getappinfo {path}")
-
-        def after(res: CommandResult) -> None:
-            self._log(res)
-            self.ctx.notify(
-                f"appinfo.bin descargado → {path}" if res.ok else "Fallo al descargar appinfo.bin",
-                "ok" if res.ok else "error",
-            )
-
-        self.ctx.adb.run(["getappinfo", path], after)
 
     # ---- PUK (puktools) ----
     def _on_puk_sub(self, sub: str) -> None:
-        """Ajusta el campo de argumento según el subcomando de puk."""
         placeholders = {
             "list": "(sin argumento)",
             "install": "fichero .puk (usa «Examinar…»)…",
@@ -247,10 +499,30 @@ class SystoolPage(Page):
         self._out.appendPlainText("$ pax_adb " + " ".join(args))
         self.ctx.adb.run(args, self._log, merge_stderr=True)
 
-    # ---- sysver ----
+    # ---- sysver / appinfo ----
     def _sysver(self) -> None:
         if not self.ctx.adb.serial:
             self.ctx.notify("Sin dispositivo seleccionado.", "warn")
             return
         self._out.appendPlainText("$ pax_adb sysver")
         self.ctx.adb.run(["sysver"], self._log, merge_stderr=True)
+
+    def _get_appinfo(self) -> None:
+        if not self.ctx.adb.serial:
+            self.ctx.notify("Sin dispositivo seleccionado.", "warn")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Guardar appinfo.bin", "appinfo.bin", "Binario (*.bin);;Todos (*)"
+        )
+        if not path:
+            return
+        self._out.appendPlainText(f"$ pax_adb getappinfo {path}")
+
+        def after(res: CommandResult) -> None:
+            self._log(res)
+            self.ctx.notify(
+                f"appinfo.bin descargado → {path}" if res.ok else "Fallo al descargar appinfo.bin",
+                "ok" if res.ok else "error",
+            )
+
+        self.ctx.adb.run(["getappinfo", path], after)
