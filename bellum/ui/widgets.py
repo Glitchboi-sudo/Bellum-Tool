@@ -5,13 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QMargins, QPoint, QRect, QSize, Qt
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
+    QLayout,
     QLabel,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QStackedWidget,
     QTabWidget,
@@ -99,6 +101,103 @@ def hrow(*widgets: QWidget, spacing: int = 8) -> QWidget:
     for x in widgets:
         lay.addWidget(x)
     return w
+
+
+class FlowLayout(QLayout):
+    """Layout que coloca los hijos en fila y salta de línea cuando no caben.
+
+    Es la pieza clave de la responsividad: filas de botones y cuadrículas de
+    propiedades pasan de varias columnas a una sola según encoge el ancho, en
+    vez de forzar un ancho mínimo grande (que provocaba recortes con ventanas
+    estrechas / pantallas HiDPI).
+    """
+
+    def __init__(self, parent: QWidget | None = None, margin: int = 0, hspacing: int = 8,
+                 vspacing: int = 8):
+        super().__init__(parent)
+        self._items: list = []
+        self._hspace = hspacing
+        self._vspace = vspacing
+        self.setContentsMargins(QMargins(margin, margin, margin, margin))
+
+    # --- API obligatoria de QLayout ---
+    def addItem(self, item):  # noqa: N802
+        self._items.append(item)
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, index):  # noqa: N802
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index):  # noqa: N802
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self):  # noqa: N802
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self):  # noqa: N802
+        return True
+
+    def heightForWidth(self, width):  # noqa: N802
+        return self._do_layout(QRect(0, 0, width, 0), test_only=True)
+
+    def setGeometry(self, rect):  # noqa: N802
+        super().setGeometry(rect)
+        self._do_layout(rect, test_only=False)
+
+    def sizeHint(self):  # noqa: N802
+        return self.minimumSize()
+
+    def minimumSize(self):  # noqa: N802
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        m = self.contentsMargins()
+        size += QSize(m.left() + m.right(), m.top() + m.bottom())
+        return size
+
+    def _do_layout(self, rect: QRect, test_only: bool) -> int:
+        m = self.contentsMargins()
+        x = rect.x() + m.left()
+        y = rect.y() + m.top()
+        right = rect.right() - m.right()
+        line_height = 0
+        for item in self._items:
+            hint = item.sizeHint()
+            next_x = x + hint.width()
+            if next_x - 1 > right and line_height > 0:
+                x = rect.x() + m.left()
+                y = y + line_height + self._vspace
+                next_x = x + hint.width()
+                line_height = 0
+            if not test_only:
+                item.setGeometry(QRect(QPoint(x, y), hint))
+            x = next_x + self._hspace
+            line_height = max(line_height, hint.height())
+        return y + line_height + m.bottom() - rect.y()
+
+
+def flow_row(*widgets: QWidget, hspacing: int = 8, vspacing: int = 8) -> QWidget:
+    """Fila de widgets que reflujan a varias líneas cuando no caben a lo ancho."""
+    w = QWidget()
+    lay = FlowLayout(w, margin=0, hspacing=hspacing, vspacing=vspacing)
+    for x in widgets:
+        lay.addWidget(x)
+    return w
+
+
+def scroll_wrap(inner: QWidget) -> QScrollArea:
+    """Envuelve `inner` en un área desplazable (para que el contenido nunca se
+    recorte en ventanas estrechas/bajas: aparece scroll en su lugar)."""
+    area = QScrollArea()
+    area.setObjectName("PageScroll")
+    area.setWidget(inner)
+    area.setWidgetResizable(True)
+    area.setFrameShape(QFrame.Shape.NoFrame)
+    area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    return area
 
 
 def busy_bar() -> QProgressBar:

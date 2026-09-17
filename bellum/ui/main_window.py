@@ -32,7 +32,7 @@ from .pages.screenshot import ScreenshotPage
 from .pages.shell import ShellPage
 from .pages.systool import SystoolPage
 from .settings_dialog import SettingsDialog
-from .widgets import AppContext, TabPage
+from .widgets import AppContext, TabPage, scroll_wrap
 
 # Color de los iconos de la barra lateral: fija, porque el fondo de la
 # barra lateral también es fijo (siempre oscuro, en ambos temas — ver
@@ -76,7 +76,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Bellum Tool")
         self.resize(1180, 760)
-        self.setMinimumSize(980, 620)
+        # Mínimo pequeño: el contenido de cada página va dentro de un QScrollArea
+        # y las filas reflujan (FlowLayout), así que la ventana puede encogerse
+        # mucho (incluso a ~1/4 de pantalla o en HiDPI) sin recortar contenido.
+        self.setMinimumSize(360, 480)
 
         self._settings = QSettings("bellum", "bellum_tool")
         self._migrate_settings()
@@ -192,6 +195,13 @@ class MainWindow(QMainWindow):
 
         self._device_combo = QComboBox()
         self._device_combo.setObjectName("DeviceCombo")
+        # Encogible: en ventanas estrechas el combo se recorta con elipsis en
+        # vez de forzar el ancho de la barra superior.
+        self._device_combo.setMinimumWidth(80)
+        self._device_combo.setMaximumWidth(260)
+        self._device_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
         self._device_combo.currentIndexChanged.connect(self._on_device_selected)
         self._refresh_btn = QPushButton()
         ic = icons.icon("refresh", self._palette.text)
@@ -265,7 +275,9 @@ class MainWindow(QMainWindow):
             ),
         ]
         for page in self._pages:
-            self._stack.addWidget(page)
+            # Cada página va envuelta en un área desplazable: si no cabe a lo
+            # alto/ancho, aparece scroll en vez de recortarse.
+            self._stack.addWidget(scroll_wrap(page))
             item = QListWidgetItem(f"  {page.title}")
             nav_icon = icons.icon(page.icon_concept, _NAV_ICON_COLOR, size=18)
             if not nav_icon.isNull():

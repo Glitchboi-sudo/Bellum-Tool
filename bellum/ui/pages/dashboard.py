@@ -7,7 +7,6 @@ import json
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFileDialog,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QVBoxLayout,
@@ -15,7 +14,20 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.adb import CommandResult
-from ..widgets import Card, Page, busy_bar, hint, icon_button, state_badge
+from ..widgets import (
+    Card,
+    FlowLayout,
+    Page,
+    busy_bar,
+    flow_row,
+    hint,
+    icon_button,
+    state_badge,
+)
+
+# Ancho fijo de cada celda de propiedad; el FlowLayout coloca tantas por fila
+# como quepan y salta de línea (2-3 en ancho, 1 en estrecho).
+_CELL_W = 260
 
 # Un solo comando compuesto para el estado del sistema (una ida y vuelta),
 # separado por un marcador que luego partimos.
@@ -79,14 +91,12 @@ class DashboardPage(Page):
         boot_btn = icon_button("jump", ctx.palette.text, "Bootloader", tooltip="Reiniciar a bootloader")
         boot_btn.clicked.connect(lambda: self._reboot("bootloader"))
 
-        top = QHBoxLayout()
-        top.addLayout(head)
-        top.addStretch(1)
-        top.addWidget(refresh_btn)
-        top.addWidget(report_btn)
-        top.addWidget(reboot_btn)
-        top.addWidget(boot_btn)
-        root.addLayout(top)
+        head_w = QWidget()
+        head_w.setLayout(head)
+        root.addWidget(head_w)
+        # Botones en un FlowLayout: se alinean a la derecha en ancho y saltan de
+        # línea cuando la ventana es estrecha, en vez de recortarse.
+        root.addWidget(flow_row(refresh_btn, report_btn, reboot_btn, boot_btn))
         self._action_btns = (report_btn, reboot_btn, boot_btn)
 
         self._busy = busy_bar()
@@ -95,11 +105,7 @@ class DashboardPage(Page):
 
         # --- Tarjeta de propiedades ---
         self._info_card = Card("Información del dispositivo")
-        self._grid = QGridLayout()
-        self._grid.setHorizontalSpacing(24)
-        self._grid.setVerticalSpacing(10)
-        self._grid.setColumnStretch(1, 1)
-        self._grid.setColumnStretch(3, 1)
+        self._grid = FlowLayout(hspacing=12, vspacing=10)
         holder = QWidget()
         holder.setLayout(self._grid)
         self._info_card.add(holder)
@@ -109,8 +115,7 @@ class DashboardPage(Page):
 
         # --- Tarjeta de estado del sistema ---
         self._status_card = Card("Estado del sistema")
-        stat_row = QHBoxLayout()
-        stat_row.setSpacing(28)
+        stat_flow = FlowLayout(hspacing=28, vspacing=12)
         self._stat_labels: dict[str, QLabel] = {}
         for key, caption in (
             ("battery", "Batería"),
@@ -127,12 +132,12 @@ class DashboardPage(Page):
             cell.addWidget(cap)
             cell.addWidget(val)
             wrap = QWidget()
+            wrap.setMinimumWidth(150)
             wrap.setLayout(cell)
-            stat_row.addWidget(wrap)
+            stat_flow.addWidget(wrap)
             self._stat_labels[key] = val
-        stat_row.addStretch(1)
         holder2 = QWidget()
-        holder2.setLayout(stat_row)
+        holder2.setLayout(stat_flow)
         self._status_card.add(holder2)
         root.addWidget(self._status_card)
         root.addStretch(1)
@@ -232,11 +237,10 @@ class DashboardPage(Page):
         self._render_grid(props)
 
     def _render_grid(self, props: dict[str, str]) -> None:
-        """(Re)pinta la cuadrícula de propiedades destacadas a partir de `props`."""
+        """(Re)pinta las propiedades destacadas. El FlowLayout reparte las celdas
+        (ancho fijo) en tantas columnas como quepan y salta de línea al encoger."""
         self._clear_grid()
         pal = self.ctx.palette
-        row = 0
-        col = 0
         shown = 0
         for key, label in _FEATURED:
             val = props.get(key)
@@ -252,12 +256,9 @@ class DashboardPage(Page):
             cell.addWidget(name)
             cell.addWidget(value)
             wrap = QWidget()
+            wrap.setFixedWidth(_CELL_W)
             wrap.setLayout(cell)
-            self._grid.addWidget(wrap, row, col * 2, 1, 2)
-            col += 1
-            if col >= 2:
-                col = 0
-                row += 1
+            self._grid.addWidget(wrap)
             shown += 1
         if shown == 0:
             self._empty.setText("El dispositivo respondió pero sin propiedades reconocidas.")
