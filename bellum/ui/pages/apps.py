@@ -11,6 +11,8 @@ from __future__ import annotations
 import glob
 import os
 import posixpath
+import re
+import tempfile
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -31,6 +33,18 @@ from ...core.adb import CommandResult
 from ...core.models import KNOWN_PAX_PACKAGES, Package
 from ..app_detail_dialog import AppDetailDialog
 from ..widgets import EmptyState, Page, busy_bar, hint, icon_button, stacked_with_empty
+
+# Centinela para las descargas aún en curso en self._pending: un pull fallido
+# guarda None (fichero ilegible), que es un valor legítimo y no debe confundirse
+# con "todavía no ha respondido".
+_PENDING = object()
+
+# Atributos de las etiquetas de apertura <package …> / <pkg …> del XML del
+# PackageManager. Parseamos solo la etiqueta de apertura (regex), sin cargar los
+# bloques anidados de permisos/firmas, y evitamos <updated-package>/<pkg-restr>.
+_PKG_RE = re.compile(r"<package\s+([^>]*?)/?>", re.S)
+_RESTR_PKG_RE = re.compile(r"<pkg\s+([^>]*?)/?>", re.S)
+_ATTR_RE = re.compile(r'(\w+)="([^"]*)"')
 
 
 class AppsPage(Page):
@@ -144,85 +158,109 @@ class AppsPage(Page):
             return
         self._count.setText("Cargando…")
         self._busy.show()
-        # Cuatro consultas en paralelo; se combinan cuando todas regresan.
-        # 'versions' viene de un único `dumpsys package packages` (todas las
-        # versiones de una vez), evitando cientos de llamadas por paquete.
-        self._pending = {"all": None, "system": None, "disabled": None, "versions": None}
-        self.ctx.adb.shell("pm list packages -f", lambda r: self._collect("all", r))
-        self.ctx.adb.shell("pm list packages -s", lambda r: self._collect("system", r))
-        self.ctx.adb.shell("pm list packages -d", lambda r: self._collect("disabled", r))
-        self.ctx.adb.shell("dumpsys package packages", lambda r: self._collect("versions", r))
+        # Los terminales PAX de producción bloquean el shell de adbd: `pm list
+        # packages` / `dumpsys` devuelven vacío (el device cierra el stream sin
+        # datos). Así que la lista de apps se obtiene igual que el PaydroidTool
+        # oficial: descargando por 'sync' (pull) el packages.xml del
+        # PackageManager y parseándolo. El estado activado/desactivado vive en
+        # package-restrictions.xml (por usuario); es opcional, ya que en muchos
+        # firmwares no es accesible por permisos (se degrada a "todo activado").
+        self._tmpdir = tempfile.mkdtemp(prefix="bellum-apps-")
+        self._pending = {"packages": _PENDING, "restrictions": _PENDING}
+        self._pull_text("packages", "/data/system/packages.xml")
+        self._pull_text("restrictions", "/data/system/users/0/package-restrictions.xml")
 
-    def _collect(self, key: str, res: CommandResult) -> None:
-        self._pending[key] = res
-        if any(v is None for v in self._pending.values()):
+    def _pull_text(self, key: str, remote: str) -> None:
+        """Descarga `remote` a un temporal y entrega su contenido (o None) a _collect."""
+        local = os.path.join(self._tmpdir, key + ".xml")
+
+        def after(res: CommandResult) -> None:
+            text: str | None = None
+            if res.ok and os.path.exists(local):
+                try:
+                    with open(local, encoding="utf-8", errors="replace") as fh:
+                        text = fh.read()
+                except OSError:
+                    text = None
+            self._collect(key, text)
+
+        self.ctx.adb.run(["pull", remote, local], after)
+
+    def _collect(self, key: str, value: str | None) -> None:
+        self._pending[key] = value
+        if any(v is _PENDING for v in self._pending.values()):
             return
         self._busy.hide()
         self._build()
 
     @staticmethod
-    def _names(res) -> set[str]:
-        out: set[str] = set()
-        if not isinstance(res, CommandResult):
-            return out
-        for line in res.stdout.splitlines():
-            line = line.strip()
-            if line.startswith("package:"):
-                out.add(line.split("=")[-1].strip())
-        return out
+    def _parse_packages(xml_text: str) -> tuple[list[tuple[str, str, bool]], dict[str, tuple[str, str]]]:
+        """De packages.xml extrae (name, codePath, system) y {pkg: (versionName, versionCode)}.
+
+        Solo se parsean las etiquetas de apertura <package …>; <updated-package>
+        (versión de sistema reemplazada) y <renamed-package> quedan fuera porque
+        no empiezan por '<package'.
+        """
+        pkgs: list[tuple[str, str, bool]] = []
+        versions: dict[str, tuple[str, str]] = {}
+        for m in _PKG_RE.finditer(xml_text):
+            attrs = dict(_ATTR_RE.findall(m.group(1)))
+            name = attrs.get("name")
+            if not name:
+                continue
+            code_path = attrs.get("codePath", "")
+            system = code_path.startswith(("/system", "/vendor", "/product", "/oem"))
+            if not system:
+                flags = attrs.get("publicFlags", "")
+                if flags.lstrip("-").isdigit():
+                    system = bool(int(flags) & 0x1)  # ApplicationInfo.FLAG_SYSTEM
+            pkgs.append((name, code_path, system))
+            versions[name] = (attrs.get("versionName", ""), attrs.get("version", ""))
+        return pkgs, versions
 
     @staticmethod
-    def _parse_versions(res) -> dict[str, tuple[str, str]]:
-        """De `dumpsys package packages` extrae {pkg: (versionName, versionCode)}.
+    def _parse_restrictions(xml_text: str | None) -> set[str]:
+        """De package-restrictions.xml devuelve el conjunto de paquetes desactivados.
 
-        El volcado agrupa por bloques 'Package [<pkg>] (...):' con líneas
-        'versionCode=N ...' y 'versionName=...'. Nos quedamos con el primer par
-        de cada bloque (la entrada principal).
+        Atributo 'enabled': 0=default, 1=enabled, 2=disabled, 3=disabled-user,
+        4=disabled-until-used. Consideramos desactivado 2 y 3.
         """
-        out: dict[str, tuple[str, str]] = {}
-        if not isinstance(res, CommandResult):
-            return out
-        current = None
-        for raw in res.stdout.splitlines():
-            line = raw.strip()
-            if line.startswith("Package [") and "]" in line:
-                current = line[len("Package ["):line.index("]")]
-                out.setdefault(current, ("", ""))
-            elif current:
-                name, code = out[current]
-                if not code and line.startswith("versionCode="):
-                    code = line.split("versionCode=", 1)[1].split()[0]
-                    out[current] = (name, code)
-                elif not name and line.startswith("versionName="):
-                    name = line.split("versionName=", 1)[1].strip()
-                    out[current] = (name, out[current][1])
-        return out
+        disabled: set[str] = set()
+        if not xml_text:
+            return disabled
+        for m in _RESTR_PKG_RE.finditer(xml_text):
+            attrs = dict(_ATTR_RE.findall(m.group(1)))
+            name = attrs.get("name")
+            if name and attrs.get("enabled", "") in ("2", "3"):
+                disabled.add(name)
+        return disabled
 
     def _build(self) -> None:
-        all_res = self._pending["all"]
-        system = self._names(self._pending["system"])
-        disabled = self._names(self._pending["disabled"])
-        self._versions = self._parse_versions(self._pending["versions"])
+        pkg_xml = self._pending.get("packages")
+        if not pkg_xml:
+            # No se pudo leer packages.xml (sin permisos de sync, ruta distinta…).
+            self._packages = []
+            self._versions = {}
+            self._apply_filter()
+            self.ctx.notify(
+                "No se pudo leer /data/system/packages.xml del terminal "
+                "(¿sin acceso por sync?).",
+                "warn",
+            )
+            return
 
-        pkgs: list[Package] = []
-        if isinstance(all_res, CommandResult):
-            for line in all_res.stdout.splitlines():
-                line = line.strip()
-                if not line.startswith("package:"):
-                    continue
-                body = line[len("package:"):]
-                if "=" in body:
-                    path, _, name = body.rpartition("=")
-                else:
-                    path, name = "", body
-                pkgs.append(
-                    Package(
-                        name=name,
-                        apk_path=path,
-                        system=name in system,
-                        enabled=name not in disabled,
-                    )
-                )
+        disabled = self._parse_restrictions(self._pending.get("restrictions"))
+        parsed, self._versions = self._parse_packages(pkg_xml)
+
+        pkgs = [
+            Package(
+                name=name,
+                apk_path=code_path,
+                system=system,
+                enabled=name not in disabled,
+            )
+            for name, code_path, system in parsed
+        ]
         pkgs.sort(key=lambda p: p.name)
         self._packages = pkgs
         self._apply_filter()
