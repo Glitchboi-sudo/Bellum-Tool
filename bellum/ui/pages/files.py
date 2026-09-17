@@ -19,7 +19,15 @@ from PySide6.QtWidgets import (
 
 from ...core.adb import CommandResult
 from .. import icons
-from ..widgets import EmptyState, Page, busy_bar, hint, icon_button, stacked_with_empty
+from ..widgets import (
+    EmptyState,
+    Page,
+    busy_bar,
+    flow_row,
+    hint,
+    icon_button,
+    stacked_with_empty,
+)
 
 class FilesPage(Page):
     title = "Ficheros"
@@ -33,20 +41,16 @@ class FilesPage(Page):
         root.setContentsMargins(22, 18, 22, 22)
         root.setSpacing(12)
 
-        bar = QHBoxLayout()
         up = icon_button("up", ctx.palette.text, tooltip="Subir un nivel")
         up.clicked.connect(self._go_up)
         self._path = QLineEdit(self._cwd)
+        self._path.setMinimumWidth(160)
         self._path.returnPressed.connect(self._navigate_to_path)
         go = QPushButton("Ir")
         go.clicked.connect(self._navigate_to_path)
         reload_btn = icon_button("refresh", ctx.palette.text, "Actualizar")
         reload_btn.clicked.connect(self.refresh)
-        bar.addWidget(up)
-        bar.addWidget(self._path, 1)
-        bar.addWidget(go)
-        bar.addWidget(reload_btn)
-        root.addLayout(bar)
+        root.addWidget(flow_row(up, self._path, go, reload_btn))
 
         self._busy = busy_bar()
         self._busy.hide()
@@ -63,10 +67,8 @@ class FilesPage(Page):
         self._stack = stacked_with_empty(self._list, self._empty_state)
         root.addWidget(self._stack, 1)
 
-        actions = QHBoxLayout()
         self._status = hint("—")
-        actions.addWidget(self._status)
-        actions.addStretch(1)
+        root.addWidget(self._status)
         push_btn = icon_button(
             "add", ctx.palette.accent_text, "Subir fichero…", object_name="Primary"
         )
@@ -78,10 +80,7 @@ class FilesPage(Page):
         delete_btn = QPushButton("Borrar (unlink)")
         delete_btn.setObjectName("Danger")
         delete_btn.clicked.connect(self._unlink)
-        actions.addWidget(push_btn)
-        actions.addWidget(pull_btn)
-        actions.addWidget(delete_btn)
-        root.addLayout(actions)
+        root.addWidget(flow_row(push_btn, pull_btn, delete_btn))
 
     # ------------------------------------------------------------------
     def refresh(self) -> None:

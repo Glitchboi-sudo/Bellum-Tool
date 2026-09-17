@@ -32,7 +32,15 @@ from PySide6.QtWidgets import (
 from ...core.adb import CommandResult
 from ...core.models import KNOWN_PAX_PACKAGES, Package
 from ..app_detail_dialog import AppDetailDialog
-from ..widgets import EmptyState, Page, busy_bar, hint, icon_button, stacked_with_empty
+from ..widgets import (
+    EmptyState,
+    Page,
+    busy_bar,
+    flow_row,
+    hint,
+    icon_button,
+    stacked_with_empty,
+)
 
 # Centinela para las descargas aún en curso en self._pending: un pull fallido
 # guarda None (fichero ilegible), que es un valor legítimo y no debe confundirse
@@ -61,10 +69,10 @@ class AppsPage(Page):
         root.setContentsMargins(22, 18, 22, 22)
         root.setSpacing(12)
 
-        # --- barra de filtros ---
-        bar = QHBoxLayout()
+        # --- barra de filtros (refluye en ventanas estrechas) ---
         self._search = QLineEdit()
         self._search.setPlaceholderText("Filtrar por nombre de paquete…")
+        self._search.setMinimumWidth(200)
         self._search.textChanged.connect(self._apply_filter)
         self._filter = QComboBox()
         self._filter.addItems(["Todos", "Usuario (3rd-party)", "Sistema", "Desactivados"])
@@ -77,12 +85,9 @@ class AppsPage(Page):
             "add", ctx.palette.accent_text, "Instalar APK…", object_name="Primary"
         )
         install_btn.clicked.connect(self._install_apk)
-        bar.addWidget(self._search, 1)
-        bar.addWidget(self._filter)
-        bar.addWidget(reload_btn)
-        bar.addWidget(folder_btn)
-        bar.addWidget(install_btn)
-        root.addLayout(bar)
+        root.addWidget(
+            flow_row(self._search, self._filter, reload_btn, folder_btn, install_btn)
+        )
 
         self._busy = busy_bar()
         self._busy.hide()
@@ -98,11 +103,15 @@ class AppsPage(Page):
         self._table.verticalHeader().setVisible(False)
         self._table.itemDoubleClicked.connect(self._open_detail)
         hh = self._table.horizontalHeader()
+        # Sección mínima para que "Paquete" no se comprima cuando la tabla
+        # necesita scroll horizontal en ventanas estrechas.
+        hh.setMinimumSectionSize(140)
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)          # Paquete
-        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # Versión
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)       # Versión
         hh.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # Tipo
         hh.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Estado
         hh.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)          # Nota
+        self._table.setColumnWidth(1, 160)
 
         self._empty_no_device = EmptyState(
             "Sin dispositivo conectado.\nConecta un terminal PAX por USB para ver sus aplicaciones.",
@@ -118,14 +127,12 @@ class AppsPage(Page):
         self._stack.addWidget(self._empty_no_match)  # índice 2
         root.addWidget(self._stack, 1)
 
-        # --- acciones ---
-        actions = QHBoxLayout()
+        # --- acciones (refluyen en ventanas estrechas) ---
         self._count = hint("0 paquetes")
-        actions.addWidget(self._count)
-        actions.addStretch(1)
+        root.addWidget(self._count)
         launch_btn = icon_button("play", ctx.palette.text, "Lanzar")
         launch_btn.clicked.connect(self._launch_sel)
-        actions.addWidget(launch_btn)
+        btns = [launch_btn]
         for text, slot in (
             ("Forzar detención", self._force_stop_sel),
             ("Desactivar", self._disable_sel),
@@ -134,18 +141,18 @@ class AppsPage(Page):
         ):
             b = QPushButton(text)
             b.clicked.connect(slot)
-            actions.addWidget(b)
+            btns.append(b)
         extract_btn = icon_button("save", ctx.palette.text, "Extraer APK…")
         extract_btn.clicked.connect(self._extract_sel)
-        actions.addWidget(extract_btn)
+        btns.append(extract_btn)
         # Sin icono: el botón "Danger" invierte fondo/texto en :hover (ver
         # theme.py), y un icono horneado en un color fijo se volvería
         # invisible sobre su propio fondo al pasar el ratón.
         uninstall_btn = QPushButton("Desinstalar (user 0)")
         uninstall_btn.setObjectName("Danger")
         uninstall_btn.clicked.connect(self._uninstall_sel)
-        actions.addWidget(uninstall_btn)
-        root.addLayout(actions)
+        btns.append(uninstall_btn)
+        root.addWidget(flow_row(*btns))
 
     # ------------------------------------------------------------------
     def refresh(self) -> None:
