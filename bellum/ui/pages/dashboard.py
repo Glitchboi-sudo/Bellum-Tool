@@ -229,7 +229,11 @@ class DashboardPage(Page):
         # intenta cuando las propiedades vinieron por shell.
         if not self._via_pax:
             self._load_status()
+        self._render_grid(props)
 
+    def _render_grid(self, props: dict[str, str]) -> None:
+        """(Re)pinta la cuadrícula de propiedades destacadas a partir de `props`."""
+        self._clear_grid()
         pal = self.ctx.palette
         row = 0
         col = 0
@@ -264,12 +268,20 @@ class DashboardPage(Page):
         """Lee las propiedades destacadas con `systool get sysprop <key>`.
 
         Se usa cuando `shell getprop` no devuelve nada (shell bloqueado). Cada
-        clave es una ida y vuelta; se acumulan y, al terminar todas, se
-        reutiliza `_on_props` con el dict resultante.
+        clave es una ida y vuelta independiente; el grid se pinta de forma
+        incremental según van llegando, así una consulta lenta o colgada no
+        deja la tarjeta en blanco (antes esperábamos a que TODAS terminaran).
+        El dispositivo se marca online de inmediato: ya sabemos su serial y que
+        `pax_adb devices` lo ve.
         """
-        self._status.setText("Leyendo propiedades (systool)…")
-        self._pax_props: dict[str, str] = {}
+        self._busy.hide()
+        self._last_props = self._pax_props = {}
         self._pax_remaining = len(_FEATURED)
+        self._status.setText("Terminal PAX")
+        self._substatus.setText(self.ctx.adb.serial)
+        self._empty.setText("Leyendo propiedades (systool)…")
+        self._empty.show()
+        self._replace_badge("device")
         for key, _ in _FEATURED:
             self.ctx.adb.run(
                 ["systool", "get", "sysprop", key],
@@ -285,8 +297,19 @@ class DashboardPage(Page):
                 if k == key and v.strip():
                     self._pax_props[key] = v.strip()
         self._pax_remaining -= 1
-        if self._pax_remaining == 0:
-            self._on_props(self._pax_props)
+        # Actualiza el título con el modelo en cuanto se conozca.
+        model = self._pax_props.get("ro.product.model")
+        if model:
+            self._status.setText(model)
+        # Pinta lo que haya llegado hasta ahora (incremental).
+        if self._pax_props:
+            self._last_props = dict(self._pax_props)
+            self._empty.hide()
+            self._render_grid(self._pax_props)
+        if self._pax_remaining == 0 and not self._pax_props:
+            # Ninguna propiedad respondió: el terminal está, pero no soltó nada.
+            self._empty.setText("El terminal no devolvió propiedades por systool.")
+            self._empty.show()
 
     def _reboot(self, mode: str) -> None:
         if not self.ctx.adb.serial:
