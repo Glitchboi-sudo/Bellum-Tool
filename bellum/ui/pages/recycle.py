@@ -113,13 +113,29 @@ class RecyclePage(Page):
         self._out.appendPlainText("$ adb reboot bootloader")
         self.ctx.adb.run(["reboot", "bootloader"], self._log)
 
+    # Componentes de PAX que este paso desinstala ("quitar tampered").
+    _TAMPER_PKGS = ("com.pax.ipp.neptune", "com.pax.daemon")
+
     def _remove_tampered(self) -> None:
         if not self.ctx.adb.serial:
             self.ctx.notify("Sin dispositivo adb seleccionado.", "warn")
             return
-        self._out.appendPlainText("$ adb remove tampered")
-        self.ctx.adb.run(["shell pm uninstall --user 0", "com.pax.ipp.neptune"], self._log)
-        self.ctx.adb.run(["shell pm uninstall --user 0", "com.pax.daemon"], self._log)
+        if not self._confirm(
+            "Quitar tampered",
+            "Vas a desinstalar componentes de PAX:\n\n"
+            "  • com.pax.ipp.neptune (núcleo de pago seguro)\n"
+            "  • com.pax.daemon\n\n"
+            "Es una acción destructiva sobre la pila de pago y requiere el shell de "
+            "adbd desbloqueado en el terminal. ¿Continuar?",
+        ):
+            return
+        # Cada uninstall es un `adb shell pm uninstall …`. Antes se pasaba
+        # "shell pm uninstall --user 0" como UN token (argv[0] inválido para
+        # pax_adb) y no ejecutaba nada; ahora va por adb.shell() correctamente.
+        for pkg in self._TAMPER_PKGS:
+            cmd = f"pm uninstall --user 0 {pkg}"
+            self._out.appendPlainText(f"$ adb shell {cmd}")
+            self.ctx.adb.shell(cmd, self._log)
 
     def _erase(self, part: str) -> None:
         if not self._confirm(
