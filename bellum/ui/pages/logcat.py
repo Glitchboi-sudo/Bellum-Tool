@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import icons
-from ..widgets import Page, icon_button
+from ..widgets import Page, flow_row, icon_button
 
 _MAX_BLOCKS = 5000  # límite de líneas en pantalla para no consumir memoria sin fin
 
@@ -35,7 +35,6 @@ class LogcatPage(Page):
         root.setContentsMargins(22, 18, 22, 22)
         root.setSpacing(12)
 
-        bar = QHBoxLayout()
         self._toggle = icon_button(
             "play", ctx.palette.accent_text, "Iniciar", object_name="Primary"
         )
@@ -49,18 +48,17 @@ class LogcatPage(Page):
         self._priority.setCurrentText("Info")
         self._filter = QLineEdit()
         self._filter.setPlaceholderText("Filtrar líneas (texto contenido)…")
+        self._filter.setMinimumWidth(180)
         self._filter.textChanged.connect(self._reapply_filter)
         clear_btn = icon_button("remove", ctx.palette.text, "Limpiar")
         clear_btn.clicked.connect(self._clear)
         save_btn = icon_button("save", ctx.palette.text, "Guardar…")
         save_btn.clicked.connect(self._save)
-        bar.addWidget(self._toggle)
-        bar.addWidget(self._source)
-        bar.addWidget(self._priority)
-        bar.addWidget(self._filter, 1)
-        bar.addWidget(clear_btn)
-        bar.addWidget(save_btn)
-        root.addLayout(bar)
+        root.addWidget(
+            flow_row(
+                self._toggle, self._source, self._priority, self._filter, clear_btn, save_btn
+            )
+        )
 
         self._view = QPlainTextEdit()
         self._view.setObjectName("Console")

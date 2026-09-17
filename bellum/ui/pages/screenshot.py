@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.adb import CommandResult
-from ..widgets import Page, busy_bar, icon_button
+from ..widgets import Page, busy_bar, flow_row, icon_button
 
 _REMOTE = "/sdcard/.tpv_shot.png"
 
@@ -35,7 +35,6 @@ class ScreenshotPage(Page):
         root.setContentsMargins(22, 18, 22, 22)
         root.setSpacing(12)
 
-        bar = QHBoxLayout()
         self._capture = icon_button(
             "camera", ctx.palette.accent_text, "Capturar", object_name="Primary"
         )
@@ -45,12 +44,9 @@ class ScreenshotPage(Page):
         self._save.setEnabled(False)
         self._status = QLabel("Pulsa «Capturar» para tomar una captura del terminal.")
         self._status.setObjectName("Hint")
-        bar.addWidget(self._capture)
-        bar.addWidget(self._save)
-        bar.addSpacing(8)
-        bar.addWidget(self._status)
-        bar.addStretch(1)
-        root.addLayout(bar)
+        self._status.setWordWrap(True)
+        root.addWidget(flow_row(self._capture, self._save))
+        root.addWidget(self._status)
 
         self._busy = busy_bar()
         self._busy.hide()

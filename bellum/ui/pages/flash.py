@@ -28,23 +28,19 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.adb import CommandResult
-from ..widgets import Card, Page, hint, icon_button
+from ..widgets import Card, Page, flow_row, hint, icon_button
 
 _COMMON_PARTS = ["boot", "system", "uboot", "logo", "recovery", "userdata", "cache", "vendor"]
 
 
 def _row(*widgets: QWidget, stretch_index: int | None = None) -> QWidget:
-    """Fila horizontal. `stretch_index` marca qué widget se estira; si es None,
-    se añade un stretch al final (los widgets quedan alineados a la izquierda)."""
-    w = QWidget()
-    lay = QHBoxLayout(w)
-    lay.setContentsMargins(0, 0, 0, 0)
-    lay.setSpacing(8)
-    for i, x in enumerate(widgets):
-        lay.addWidget(x, 1 if i == stretch_index else 0)
-    if stretch_index is None:
-        lay.addStretch(1)
-    return w
+    """Fila horizontal que refluye a varias líneas en ventanas estrechas.
+
+    `stretch_index` ya no estira (el FlowLayout coloca cada widget con su tamaño
+    natural); solo se usa para darle al campo señalado un ancho mínimo cómodo."""
+    if stretch_index is not None and 0 <= stretch_index < len(widgets):
+        widgets[stretch_index].setMinimumWidth(160)
+    return flow_row(*widgets)
 
 
 class FlashPage(Page):

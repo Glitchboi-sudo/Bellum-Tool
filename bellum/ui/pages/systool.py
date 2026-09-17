@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.adb import CommandResult
-from ..widgets import Card, Page, hint, icon_button
+from ..widgets import Card, Page, flow_row, hint, icon_button
 
 # Subcomandos de systool que toman un fichero local como último argumento.
 _FILE_BASED = {"update", "write", "install", "apn", "puk"}
@@ -43,17 +43,11 @@ _PRESETS = [
 
 
 def _hrow(*widgets: QWidget, stretch_index: int | None = None) -> QWidget:
-    from PySide6.QtWidgets import QHBoxLayout
-
-    w = QWidget()
-    lay = QHBoxLayout(w)
-    lay.setContentsMargins(0, 0, 0, 0)
-    lay.setSpacing(8)
-    for i, x in enumerate(widgets):
-        lay.addWidget(x, 1 if i == stretch_index else 0)
-    if stretch_index is None:
-        lay.addStretch(1)
-    return w
+    # Refluye a varias líneas cuando la ventana es estrecha (evita recortes por
+    # la derecha); el campo señalado por stretch_index recibe un ancho mínimo.
+    if stretch_index is not None and 0 <= stretch_index < len(widgets):
+        widgets[stretch_index].setMinimumWidth(160)
+    return flow_row(*widgets)
 
 
 class SystoolPage(Page):

@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.adb import CommandResult
-from ..widgets import Page, icon_button
+from ..widgets import Page, flow_row, icon_button
 
 _QUICK = [
     ("Propiedades (getprop)", "getprop"),
@@ -42,7 +42,6 @@ class ShellPage(Page):
         root.setContentsMargins(22, 18, 22, 22)
         root.setSpacing(12)
 
-        top = QHBoxLayout()
         self._quick = QComboBox()
         self._quick.addItem("Comandos rápidos…", "")
         for label, cmd in _QUICK:
@@ -50,10 +49,7 @@ class ShellPage(Page):
         self._quick.activated.connect(self._pick_quick)
         clear_btn = icon_button("remove", ctx.palette.text, "Limpiar")
         clear_btn.clicked.connect(lambda: self._out.clear())
-        top.addWidget(self._quick)
-        top.addStretch(1)
-        top.addWidget(clear_btn)
-        root.addLayout(top)
+        root.addWidget(flow_row(self._quick, clear_btn))
 
         self._out = QPlainTextEdit()
         self._out.setObjectName("Console")
