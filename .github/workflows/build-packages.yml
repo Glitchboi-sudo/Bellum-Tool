@@ -158,6 +158,7 @@ jobs:
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
+          name: Unus
           files: |
             artifacts/**/*.deb
             artifacts/**/*.rpm
