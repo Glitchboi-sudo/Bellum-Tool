@@ -24,11 +24,14 @@ from . import icons, theme
 from .pages.apps import AppsPage
 from .pages.dashboard import DashboardPage
 from .pages.diagtools import DiagToolsPage
+from .pages.dump import DumpPage
 from .pages.files import FilesPage
 from .pages.flash import FlashPage
 from .pages.logcat import LogcatPage
+from .pages.personalize import PersonalizePage
 from .pages.recycle import RecyclePage
 from .pages.screenshot import ScreenshotPage
+from .pages.serialcon import SerialConsolePage
 from .pages.shell import ShellPage
 from .pages.systool import SystoolPage
 from .settings_dialog import SettingsDialog
@@ -293,6 +296,7 @@ class MainWindow(QMainWindow):
                     LogcatPage(self._ctx),
                     ShellPage(self._ctx),
                     ScreenshotPage(self._ctx),
+                    SerialConsolePage(self._ctx),
                     DiagToolsPage(self._ctx),
                 ],
             ),
@@ -300,7 +304,13 @@ class MainWindow(QMainWindow):
                 self._ctx,
                 "Mantenimiento",
                 "tools",
-                [FlashPage(self._ctx), RecyclePage(self._ctx), SystoolPage(self._ctx)],
+                [
+                    FlashPage(self._ctx),
+                    PersonalizePage(self._ctx),
+                    DumpPage(self._ctx),
+                    RecyclePage(self._ctx),
+                    SystoolPage(self._ctx),
+                ],
             ),
         ]
         for page in self._pages:

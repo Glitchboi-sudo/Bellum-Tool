@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...core import inventory
 from ...core.adb import CommandResult
 from ..widgets import (
     Card,
@@ -86,6 +87,11 @@ class DashboardPage(Page):
         refresh_btn.clicked.connect(self.refresh)
         report_btn = icon_button("save", ctx.palette.text, "Informe…", tooltip="Exportar informe del terminal")
         report_btn.clicked.connect(self._export_report)
+        dump_btn = icon_button(
+            "download", ctx.palette.text, "Volcar info",
+            tooltip="Volcar device-info + sysver + sysprops (systool) a un fichero",
+        )
+        dump_btn.clicked.connect(self._dump_info)
         reboot_btn = icon_button("reboot", ctx.palette.text, "Reiniciar")
         reboot_btn.clicked.connect(lambda: self._reboot(""))
         boot_btn = icon_button("jump", ctx.palette.text, "Bootloader", tooltip="Reiniciar a bootloader")
@@ -96,8 +102,8 @@ class DashboardPage(Page):
         root.addWidget(head_w)
         # Botones en un FlowLayout: se alinean a la derecha en ancho y saltan de
         # línea cuando la ventana es estrecha, en vez de recortarse.
-        root.addWidget(flow_row(refresh_btn, report_btn, reboot_btn, boot_btn))
-        self._action_btns = (report_btn, reboot_btn, boot_btn)
+        root.addWidget(flow_row(refresh_btn, report_btn, dump_btn, reboot_btn, boot_btn))
+        self._action_btns = (report_btn, dump_btn, reboot_btn, boot_btn)
 
         self._busy = busy_bar()
         self._busy.hide()
@@ -392,6 +398,37 @@ class DashboardPage(Page):
         self._last_status = self._parse_status(res.stdout)
         for key, lbl in self._stat_labels.items():
             lbl.setText(self._last_status.get(key, "—"))
+
+    # ---- volcar info (systool, crudo) ----
+    def _dump_info(self) -> None:
+        """Vuelca device-info + sysver + sysprops (systool) a un .txt.
+
+        Comparte la recogida con la página de Sistema PAX (core.inventory);
+        funciona aunque el shell esté bloqueado.
+        """
+        if not self.ctx.adb.serial:
+            self.ctx.notify("Sin dispositivo seleccionado.", "warn")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Volcar info del terminal",
+            f"pax_info_{self.ctx.adb.serial}.txt",
+            "Texto (*.txt);;Todos (*)",
+        )
+        if not path:
+            return
+        self._busy.show()
+
+        def done(text: str) -> None:
+            self._busy.hide()
+            try:
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(text)
+                self.ctx.notify(f"Info del terminal → {path}", "ok")
+            except OSError as exc:
+                self.ctx.notify(f"No se pudo guardar: {exc}", "error")
+
+        inventory.collect_info(self.ctx.adb, done)
 
     # ---- exportar informe ----
     def _export_report(self) -> None:

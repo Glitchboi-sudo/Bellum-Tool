@@ -11,7 +11,13 @@ categorías siguiendo la referencia de PAXDROID SYSTOOL v2.0:
   remove    eliminar (datas, rki, package, persist-app, whitelist…)   — ⚠ destructivo
   startproc lanzar una actividad
   control   comandos internos por id (1..5)                           — ⚠ avanzado
+  test      backup/restore/get-appinfo (Internal Use Only)            — ⚠ no doc.
   reboot    reiniciar la terminal                                     — ⚠
+
+El subcomando `test` no está en la referencia pública; se descubrió enumerando
+`systool set --help` en un terminal real (usage list: control|update|write|set|
+get|remove|startproc|reboot|test). Las acciones rápidas de lectura reintentan una
+vez ante `[SYSTOOL:-101]` (respuesta intermitente del daemon ante ráfagas).
 
 Los subcomandos con fichero (install/write/update, y puk/apn) toman un fichero
 local como último argumento: el binario `pax_adb` lo sube a /data/local/tmp,
@@ -32,6 +38,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...core import inventory
 from ...core.adb import CommandResult
 from ..widgets import Card, Page, flow_row, hint, icon_button
 
@@ -74,11 +81,13 @@ class SystoolPage(Page):
             )
         )
 
+        root.addWidget(self._build_quick_card(ctx))
         root.addWidget(self._build_get_card(ctx))
         root.addWidget(self._build_set_card(ctx))
         root.addWidget(self._build_files_card(ctx))
         root.addWidget(self._build_remove_card(ctx))
         root.addWidget(self._build_advanced_card(ctx))
+        root.addWidget(self._build_test_card(ctx))
         root.addWidget(self._build_puk_card(ctx))
         root.addWidget(self._build_info_card(ctx))
 
@@ -92,6 +101,93 @@ class SystoolPage(Page):
     # ==================================================================
     # Construcción de tarjetas
     # ==================================================================
+    # Acciones rápidas: presets de un clic, solo comandos conocidos y seguros
+    # (o de bajo riesgo con confirmación). Lo destructivo/de seguridad
+    # (remove rki, write puk, set customer, control 5, update os…) queda fuera
+    # a propósito, en su forma parametrizada más abajo.
+    _QUICK_READS = (
+        ("Info del terminal", ["get", "device-info"]),
+        ("Versión firmware", ["get", "sysver"]),
+        ("Modelo", ["get", "sysprop", "ro.product.model"]),
+        ("Nº de serie", ["get", "sysprop", "ro.serialno"]),
+        ("Versión Android", ["get", "sysprop", "ro.build.version.release"]),
+        ("Scanner activo", ["get", "isNewScannerActive"]),
+    )
+
+    def _build_quick_card(self, ctx) -> Card:
+        card = Card("Acciones rápidas — un clic")
+
+        # Lecturas (get) — 100% seguras, sin efectos.
+        read_btns = []
+        for label, args in self._QUICK_READS:
+            b = icon_button("tools", ctx.palette.text, label)
+            b.clicked.connect(lambda _=False, a=args: self._exec(a, retry_read=True))
+            read_btns.append(b)
+        card.add(flow_row(*read_btns))
+
+        dump = icon_button("download", ctx.palette.text, "Volcar info → fichero")
+        dump.clicked.connect(self._dump_info)
+        card.add(flow_row(dump))
+
+        # Acciones con efecto — bajo riesgo, reversibles.
+        sync = icon_button(
+            "refresh", ctx.palette.accent_text, "Sincronizar hora (PC→PAX)",
+            object_name="Primary",
+        )
+        sync.clicked.connect(self._quick_sync_time)
+        refresh_launcher = icon_button("run", ctx.palette.text, "Refrescar launcher (control 1)")
+        refresh_launcher.clicked.connect(lambda: self._exec(["control", "1"]))
+        reboot = icon_button("reboot", ctx.palette.text, "Reiniciar terminal")
+        reboot.setObjectName("Danger")
+        reboot.clicked.connect(
+            lambda: self._exec(
+                ["reboot"],
+                confirm=("systool reboot", "Se reiniciará la terminal ahora. ¿Continuar?"),
+            )
+        )
+        card.add(flow_row(sync, refresh_launcher, reboot))
+        card.add(
+            hint(
+                "Presets de los comandos conocidos y seguros. Los de riesgo (claves PUK, "
+                "RKI, customer, OTA…) están abajo en su forma completa, con confirmación."
+            )
+        )
+        return card
+
+    def _quick_sync_time(self) -> None:
+        """set time con la hora actual del PC — un clic, sin teclear la fecha."""
+        now = QDateTime.currentDateTime().toString("yyyy/MM/dd-HH:mm:ss")
+        self._exec(["set", "time", now])
+
+    def _dump_info(self) -> None:
+        """Recoge el inventario del terminal (systool) y lo guarda a fichero.
+
+        La recogida secuencial vive en core.inventory (compartida con el
+        Dashboard); aquí solo pedimos la ruta y volcamos el resultado.
+        """
+        if not self.ctx.adb.serial:
+            self.ctx.notify("Sin dispositivo seleccionado.", "warn")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Guardar info del terminal", "pax_info.txt", "Texto (*.txt);;Todos (*)"
+        )
+        if not path:
+            return
+        self._out.appendPlainText(f"$ volcando info del terminal → {path}")
+
+        def done(text: str) -> None:
+            try:
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(text)
+                self._out.appendPlainText(f"✓ Info guardada: {path}\n")
+                self.ctx.notify(f"Info del terminal → {path}", "ok")
+            except OSError as exc:
+                self.ctx.notify(f"No se pudo guardar: {exc}", "error")
+
+        inventory.collect_info(
+            self.ctx.adb, done, on_progress=lambda h: self._out.appendPlainText(f"  · {h}")
+        )
+
     def _build_get_card(self, ctx) -> Card:
         card = Card("Leer (get) — seguro")
         row_btns = []
@@ -101,7 +197,7 @@ class SystoolPage(Page):
             ("isNewScannerActive", ["get", "isNewScannerActive"]),
         ):
             b = icon_button("tools", ctx.palette.text, label)
-            b.clicked.connect(lambda _=False, a=sub: self._exec(a))
+            b.clicked.connect(lambda _=False, a=sub: self._exec(a, retry_read=True))
             row_btns.append(b)
         card.add(flow_row(*row_btns))
 
@@ -114,10 +210,11 @@ class SystoolPage(Page):
             if not key:
                 self.ctx.notify("Escribe una propiedad.", "warn")
                 return
-            self._exec(["get", "sysprop", key])
+            self._exec(["get", "sysprop", key], retry_read=True)
 
         getprop_btn.clicked.connect(read_prop)
         self._getprop.returnPressed.connect(read_prop)
+        # nota: retry_read se aplica dentro de read_prop vía _exec
         card.add(_hrow(QLabel("sysprop:"), self._getprop, getprop_btn, stretch_index=1))
         return card
 
@@ -343,6 +440,66 @@ class SystoolPage(Page):
         card.add(flow_row(reboot_btn))
         return card
 
+    def _build_test_card(self, ctx) -> Card:
+        # Subcomando 'test' — NO documentado en la referencia pública; descubierto
+        # enumerando `systool set --help` en el terminal. Marcado "Internal Use
+        # Only". Las rutas son del lado del dispositivo (no se suben desde el PC).
+        card = Card("test (interno) — ⚠ avanzado / no documentado")
+        card.add(
+            hint(
+                "Subcomando 'test' hallado en el usage del terminal (Internal Use Only). "
+                "Las rutas son del propio dispositivo. backup/get-appinfo generan un fichero "
+                "en el terminal; restore SOBRESCRIBE datos de una app."
+            )
+        )
+
+        # test get-appinfo <out path>  (lectura: genera appinfo.bin en el device)
+        self._t_appinfo = QLineEdit()
+        self._t_appinfo.setPlaceholderText("ruta de salida en el device (p. ej. /sdcard/appinfo.bin)…")
+        appinfo_run = self._mk_run(
+            lambda: ["test", "get-appinfo", self._t_appinfo.text().strip()],
+            need=self._t_appinfo,
+        )
+        card.add(_hrow(QLabel("get-appinfo:"), self._t_appinfo, appinfo_run, stretch_index=1))
+
+        # test backup <pkg> <zip path>  (genera un zip de backup en el device)
+        self._t_bpkg = QLineEdit()
+        self._t_bpkg.setPlaceholderText("packageName")
+        self._t_bzip = QLineEdit()
+        self._t_bzip.setPlaceholderText("ruta zip destino (device)…")
+        backup_run = self._mk_run(
+            lambda: ["test", "backup", self._t_bpkg.text().strip(), self._t_bzip.text().strip()],
+            need=self._t_bpkg,
+        )
+        card.add(_hrow(QLabel("backup:"), self._t_bpkg, self._t_bzip, backup_run, stretch_index=2))
+
+        # test restore <pkg> <zip path>  — ⚠ sobrescribe datos de la app
+        self._t_rpkg = QLineEdit()
+        self._t_rpkg.setPlaceholderText("packageName")
+        self._t_rzip = QLineEdit()
+        self._t_rzip.setPlaceholderText("ruta zip origen (device)…")
+        restore_run = icon_button("run", ctx.palette.text, "Restaurar ⚠")
+        restore_run.setObjectName("Danger")
+
+        def do_restore() -> None:
+            pkg = self._t_rpkg.text().strip()
+            zip_ = self._t_rzip.text().strip()
+            if not pkg or not zip_:
+                self.ctx.notify("Indica packageName y ruta del zip.", "warn")
+                return
+            self._exec(
+                ["test", "restore", pkg, zip_],
+                confirm=(
+                    "test restore",
+                    f"Vas a RESTAURAR datos sobre la app:\n\n  {pkg}\n  ← {zip_}\n\n"
+                    "Sobrescribe los datos actuales de esa app. ¿Continuar?",
+                ),
+            )
+
+        restore_run.clicked.connect(do_restore)
+        card.add(_hrow(QLabel("restore:"), self._t_rpkg, self._t_rzip, restore_run, stretch_index=2))
+        return card
+
     def _build_puk_card(self, ctx) -> Card:
         card = Card("PUK (paquetes puktools)")
         self._puk_sub = QComboBox()
@@ -415,8 +572,19 @@ class SystoolPage(Page):
             confirm = (confirm_title, confirm_body(v))
         self._exec(build_args(v), confirm=confirm)
 
-    def _exec(self, sub_args: list[str], confirm: tuple[str, str] | None = None) -> None:
-        """Ejecuta `systool <sub_args…>`. Si `confirm` está, pide confirmación."""
+    def _exec(
+        self,
+        sub_args: list[str],
+        confirm: tuple[str, str] | None = None,
+        retry_read: bool = False,
+    ) -> None:
+        """Ejecuta `systool <sub_args…>`. Si `confirm` está, pide confirmación.
+
+        `retry_read`: reintenta UNA vez si la respuesta es `[SYSTOOL:-101]`. El
+        daemon systool devuelve -101 de forma intermitente cuando recibe llamadas
+        en ráfaga; para lecturas idempotentes (get/sysver) un reintento lo
+        resuelve. No usar en comandos con efectos (podrían ejecutarse dos veces).
+        """
         if not self.ctx.adb.serial:
             self.ctx.notify("Sin dispositivo seleccionado.", "warn")
             return
@@ -428,7 +596,17 @@ class SystoolPage(Page):
             return
         args = ["systool"] + sub_args
         self._out.appendPlainText("$ pax_adb " + " ".join(args))
-        self.ctx.adb.run(args, self._log, merge_stderr=True)
+        self._run_retry(args, retry_read, attempted=False)
+
+    def _run_retry(self, args: list[str], retry_read: bool, attempted: bool) -> None:
+        def cb(res: CommandResult) -> None:
+            if retry_read and not attempted and "SYSTOOL:-101" in (res.text or ""):
+                self._out.appendPlainText("… (-101 intermitente; reintentando)")
+                self._run_retry(args, retry_read, attempted=True)
+                return
+            self._log(res)
+
+        self.ctx.adb.run(args, cb, merge_stderr=True)
 
     def _confirm(self, title: str, body: str) -> bool:
         box = QMessageBox(self)

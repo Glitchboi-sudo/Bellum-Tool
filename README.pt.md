@@ -41,20 +41,26 @@ ADB. É um front-end limpo e moderno sobre
 `paydroidboot`. Cumpre o mesmo papel que a *PayDroid Tool* do Windows, mas como
 aplicativo de desktop nativo.
 
-O menu lateral tem **5 seções** que agrupam **9 páginas de ferramentas**:
+O menu lateral tem **5 seções** que agrupam **13 páginas de ferramentas**:
 
 - **Resumo** — deteção, estado online/não autorizado/offline, ficha `getprop`,
   estado do sistema (bateria, `/data`, resolução, uptime), exportar relatório,
-  reinício para sistema/bootloader e ADB sem fios.
+  **despejar info** do terminal (`systool` device-info + `sysver` + sysprops, que
+  funciona mesmo com a shell bloqueada), reinício para sistema/bootloader e ADB
+  sem fios.
 - **Aplicativos** — gestor de pacotes completo: listar/filtrar com versão,
   instalar APK ou pasta, extrair/backup, desinstalar, ativar/desativar, limpar
   dados, iniciar / forçar paragem e permissões por app (conceder/revogar).
 - **Ficheiros** — explorador remoto com push/pull e eliminação (`unlink`).
 - **Diagnóstico** — *Registos* (`logcat` ou `syslog` da PAX), *Consola*
-  (`adb shell`), *Captura* (`screencap`), *Ferramentas* (`screenrecord`,
-  `bugreport`, `dumpsys`).
+  (`adb shell`), *Captura* (`screencap`), *Consola série* (terminal COM/tty
+  interativa via `QtSerialPort`), *Ferramentas* (`screenrecord`, `bugreport`,
+  `dumpsys`).
 - **Manutenção** — *Flash* (front-end do `fastboot` com receitas em lote
-  guardáveis), *Reciclagem* (wipe padrão), *Sistema PAX* (os comandos proprietários).
+  guardáveis), *Personalização* (BootLogo Maker: imagem → `splash.img`, + push de
+  um `bootanimation.zip`), *Despejo* (dump genérico de partições — você escolhe),
+  *Reciclagem* (wipe padrão), *Sistema PAX* (os comandos proprietários, com uma
+  barra de ações rápidas de um clique).
 
 ---
 
@@ -144,17 +150,18 @@ bellum/
 ├── core/     sem Qt exceto QProcess — núcleo reutilizável
 │   ├── adb.py        AdbService — descoberta + execução assíncrona
 │   ├── fastboot.py   FastbootService
+│   ├── inventory.py  despejo de info systool (partilhado Resumo + Sistema PAX)
 │   └── models.py     Device, Package (+ parsers puros)
 ├── ui/
 │   ├── theme.py      paletas + QSS (escuro/claro), verificado WCAG AA
 │   ├── icons.py      ícones do tema do sistema, recoloridos ao voo
 │   ├── widgets.py    Card, badges, EmptyState, Page, TabPage
 │   ├── main_window.py barra lateral (5 seções), seletor, banner
-│   └── pages/        as 9 páginas de ferramentas
+│   └── pages/        as 13 páginas de ferramentas
 └── app.py    arranque do QApplication
 ```
 
-`TabPage` agrupa as 9 páginas independentes em 5 entradas do menu e reencaminha os
+`TabPage` agrupa as 13 páginas independentes em 5 entradas do menu e reencaminha os
 hooks de ciclo de vida. Mais na
 **[Wiki → Architecture](https://github.com/Glitchboi-sudo/Bellum-Tool/wiki/Architecture)**.
 

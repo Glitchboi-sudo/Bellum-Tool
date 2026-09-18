@@ -40,19 +40,24 @@ clean, modern front-end over [`pax_adb`](https://github.com/Glitchboi-sudo/pax_l
 plus `fastboot` / `paydroidboot`. It fills the same role as the Windows *PayDroid
 Tool*, but as a native desktop application.
 
-The sidebar has **5 sections** grouping **9 tool pages**:
+The sidebar has **5 sections** grouping **13 tool pages**:
 
 - **Overview** — detection, online/unauthorized/offline status, `getprop` sheet,
-  system status (battery, `/data`, resolution, uptime), report export, reboot to
-  system/bootloader, and wireless ADB.
+  system status (battery, `/data`, resolution, uptime), report export, terminal
+  **info dump** (`systool` device-info + `sysver` + sysprops, works even when the
+  shell is locked), reboot to system/bootloader, and wireless ADB.
 - **Applications** — a full package manager: list/filter with versions, install
   APK or folder, extract/back up, uninstall, enable/disable, clear data, launch /
   force-stop, and per-app permissions (grant/revoke).
 - **Files** — remote browser with push/pull and delete (`unlink`).
 - **Diagnostics** — *Logs* (`logcat` or PAX `syslog`), *Console* (`adb shell`),
-  *Capture* (`screencap`), *Tools* (`screenrecord`, `bugreport`, `dumpsys`).
+  *Capture* (`screencap`), *Serial console* (interactive COM/tty via
+  `QtSerialPort`), *Tools* (`screenrecord`, `bugreport`, `dumpsys`).
 - **Maintenance** — *Flashing* (`fastboot` front-end with saveable batch recipes),
-  *Recycle* (standard wipe), *PAX System* (the proprietary commands).
+  *Personalization* (BootLogo Maker: image → `splash.img`, + push a
+  `bootanimation.zip`), *Dump* (generic partition dump — you pick which),
+  *Recycle* (standard wipe), *PAX System* (the proprietary commands, with a
+  one-click quick-action bar).
 
 ---
 
@@ -140,17 +145,18 @@ bellum/
 ├── core/     no Qt except QProcess — reusable core
 │   ├── adb.py        AdbService — discovery + async execution
 │   ├── fastboot.py   FastbootService
+│   ├── inventory.py  systool info dump (shared by Overview + PAX System)
 │   └── models.py     Device, Package (+ pure parsers)
 ├── ui/
 │   ├── theme.py      palettes + QSS (dark/light), WCAG-AA verified
 │   ├── icons.py      system theme icons, recolored on the fly
 │   ├── widgets.py    Card, badges, EmptyState, Page, TabPage
 │   ├── main_window.py sidebar (5 sections), device selector, banner
-│   └── pages/        the 9 tool pages
+│   └── pages/        the 13 tool pages
 └── app.py    QApplication bootstrap
 ```
 
-`TabPage` groups the 9 independent pages into 5 sidebar entries and forwards
+`TabPage` groups the 13 independent pages into 5 sidebar entries and forwards
 lifecycle hooks. More in the
 **[Wiki → Architecture](https://github.com/Glitchboi-sudo/Bellum-Tool/wiki/Architecture)**.
 
