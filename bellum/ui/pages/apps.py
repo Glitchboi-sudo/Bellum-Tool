@@ -505,9 +505,28 @@ class AppsPage(Page):
         if not dest:
             return
 
-        # Resolver rutas remotas (pueden ser splits) y descargar con tránsito
-        # por /data/local/tmp (ver core.apk: evita el bloqueo de sync sobre /data/app).
-        apk.resolve_paths(self.ctx.adb, names, lambda paths: self._pull_apks(paths, dest))
+        # La ruta del APK ya viene en packages.xml (codePath), así que no hace falta
+        # `pm path` — clave en terminales con el shell bloqueado, donde `pm` no
+        # devuelve nada. Solo se cae a `pm path` para paquetes sin codePath conocido.
+        code_paths = {p.name: p.apk_path for p in self._packages}
+        paths: dict[str, list[str]] = {}
+        unknown: list[str] = []
+        for name in names:
+            cp = code_paths.get(name, "")
+            if cp:
+                remote = cp if cp.endswith(".apk") else cp.rstrip("/") + "/base.apk"
+                paths[name] = [remote]
+            else:
+                unknown.append(name)
+
+        def finish(resolved: dict[str, list[str]]) -> None:
+            paths.update(resolved)
+            self._pull_apks(paths, dest)
+
+        if unknown:
+            apk.resolve_paths(self.ctx.adb, unknown, finish)
+        else:
+            finish({})
 
     def _pull_apks(self, paths: dict[str, list[str]], dest: str) -> None:
         # Nombre plano: <pkg>.apk (o <pkg>-<base> en splits).

@@ -55,12 +55,15 @@ def stage_pull(
     on_done: Callable[[int], None],
     stage: str = STAGE_DIR,
 ) -> None:
-    """Descarga cada `(remoto, local)` copiándolo antes a `stage`.
+    """Descarga cada `(remoto, local)`.
 
-    Llama `on_done(fallos)` al terminar (nº de descargas fallidas).
+    Primero intenta un `pull` directo (funciona cuando el servicio sync puede leer
+    la ruta, p. ej. muchos /data/...). Si falla o baja 0 bytes, reintenta copiando
+    antes a `stage` con shell `cp` (para unidades donde sync no lee /data/app pero
+    el shell sí). Llama `on_done(fallos)` al terminar.
     """
-    def start(_res: CommandResult) -> None:
-        _next(0, {"fail": 0})
+    def _ok(local: str, res: CommandResult) -> bool:
+        return res.ok and os.path.exists(local) and os.path.getsize(local) > 0
 
     def _next(i: int, stats: dict) -> None:
         if i >= len(jobs):
@@ -68,19 +71,25 @@ def stage_pull(
             on_done(stats["fail"])
             return
         remote, local = jobs[i]
-        staged = f"{stage}/{posixpath.basename(local)}"
-        # `cp` (toybox); si no existe, `cat` de reserva. Comillas por si hay espacios.
-        copy = f'cp "{remote}" "{staged}" 2>/dev/null || cat "{remote}" > "{staged}"'
 
-        def after_stage(_r: CommandResult) -> None:
-            def after_pull(res: CommandResult) -> None:
-                # pull "ok" pero 0 bytes = la copia falló (ruta sin permiso).
-                if not res.ok or not os.path.exists(local) or os.path.getsize(local) == 0:
-                    stats["fail"] += 1
+        def after_direct(res: CommandResult) -> None:
+            if _ok(local, res):
                 _next(i + 1, stats)
+                return
+            # Reserva: copiar a un sitio legible por sync y volver a tirar.
+            staged = f"{stage}/{posixpath.basename(local)}"
+            copy = f'cp "{remote}" "{staged}" 2>/dev/null || cat "{remote}" > "{staged}"'
 
-            adb.run(["pull", staged, local], after_pull)
+            def after_stage(_r: CommandResult) -> None:
+                def after_pull(res2: CommandResult) -> None:
+                    if not _ok(local, res2):
+                        stats["fail"] += 1
+                    _next(i + 1, stats)
 
-        adb.shell(copy, after_stage)
+                adb.run(["pull", staged, local], after_pull)
 
-    adb.shell(f"rm -rf {stage}; mkdir -p {stage}", start)
+            adb.shell(copy, after_stage)
+
+        adb.run(["pull", remote, local], after_direct)
+
+    adb.shell(f"rm -rf {stage}; mkdir -p {stage}", lambda _r: _next(0, {"fail": 0}))
