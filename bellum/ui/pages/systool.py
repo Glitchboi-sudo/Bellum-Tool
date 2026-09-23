@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
 
 from ...core import inventory
 from ...core.adb import CommandResult
-from ..widgets import Card, Page, flow_row, hint, icon_button
+from ..widgets import Card, DangerCard, Page, flow_row, hint, icon_button
 
 # Categorías cuyo primer token hace que pax_adb suba el fichero (último arg).
 _FILE_CATS = {"install", "write", "update"}
@@ -175,17 +175,16 @@ class SystoolPage(Page):
             return
         self._out.appendPlainText(f"$ volcando info del terminal → {path}")
 
-        def done(text: str) -> None:
-            try:
-                with open(path, "w", encoding="utf-8") as fh:
-                    fh.write(text)
+        def fin(ok: bool) -> None:
+            if ok:
                 self._out.appendPlainText(f"✓ Info guardada: {path}\n")
-                self.ctx.notify(f"Info del terminal → {path}", "ok")
-            except OSError as exc:
-                self.ctx.notify(f"No se pudo guardar: {exc}", "error")
 
-        inventory.collect_info(
-            self.ctx.adb, done, on_progress=lambda h: self._out.appendPlainText(f"  · {h}")
+        inventory.dump_to_file(
+            self.ctx.adb,
+            path,
+            self.ctx.notify,
+            on_progress=lambda h: self._out.appendPlainText(f"  · {h}"),
+            on_finish=fin,
         )
 
     def _build_get_card(self, ctx) -> Card:
@@ -346,7 +345,7 @@ class SystoolPage(Page):
         return card
 
     def _build_remove_card(self, ctx) -> Card:
-        card = Card("Eliminar (remove) — ⚠ destructivo")
+        card = DangerCard("Eliminar (remove) — ⚠ destructivo")
 
         # Botones sin argumento (con confirmación)
         no_arg = [
@@ -397,7 +396,7 @@ class SystoolPage(Page):
         return card
 
     def _build_advanced_card(self, ctx) -> Card:
-        card = Card("Avanzado: startproc / control / reboot — ⚠")
+        card = DangerCard("Avanzado: startproc / control / reboot — ⚠")
 
         # startproc Activity <pkg> <activity>
         self._sp_pkg = QLineEdit()
@@ -444,7 +443,7 @@ class SystoolPage(Page):
         # Subcomando 'test' — NO documentado en la referencia pública; descubierto
         # enumerando `systool set --help` en el terminal. Marcado "Internal Use
         # Only". Las rutas son del lado del dispositivo (no se suben desde el PC).
-        card = Card("test (interno) — ⚠ avanzado / no documentado")
+        card = DangerCard("test (interno) — ⚠ avanzado / no documentado")
         card.add(
             hint(
                 "Subcomando 'test' hallado en el usage del terminal (Internal Use Only). "
@@ -469,7 +468,7 @@ class SystoolPage(Page):
         self._t_bzip.setPlaceholderText("ruta zip destino (device)…")
         backup_run = self._mk_run(
             lambda: ["test", "backup", self._t_bpkg.text().strip(), self._t_bzip.text().strip()],
-            need=self._t_bpkg,
+            need=[self._t_bpkg, self._t_bzip],
         )
         card.add(_hrow(QLabel("backup:"), self._t_bpkg, self._t_bzip, backup_run, stretch_index=2))
 
@@ -501,7 +500,7 @@ class SystoolPage(Page):
         return card
 
     def _build_puk_card(self, ctx) -> Card:
-        card = Card("PUK (paquetes puktools)")
+        card = DangerCard("PUK (paquetes puktools)")
         self._puk_sub = QComboBox()
         self._puk_sub.addItems(["list", "install", "uninstall"])
         self._puk_sub.currentTextChanged.connect(self._on_puk_sub)
@@ -547,19 +546,24 @@ class SystoolPage(Page):
         card.add(_hrow(QLabel(label), field, btn, stretch_index=1))
         return field
 
-    def _mk_run(self, build_args, need: QLineEdit | None = None):
-        """Crea un botón 'Ejecutar' que valida `need` y ejecuta build_args()."""
+    def _mk_run(self, build_args, need: QLineEdit | list[QLineEdit] | None = None):
+        """Crea un botón 'Ejecutar' que valida `need` y ejecuta build_args().
+
+        `need` puede ser un solo campo o una lista: se exige que TODOS estén
+        rellenos (p. ej. `test backup` necesita packageName y ruta del zip).
+        """
+        fields = [need] if isinstance(need, QLineEdit) else list(need or [])
         btn = icon_button("run", self.ctx.palette.accent_text, "Ejecutar", object_name="Primary")
 
         def run() -> None:
-            if need is not None and not need.text().strip():
+            if any(not f.text().strip() for f in fields):
                 self.ctx.notify("Falta un valor.", "warn")
                 return
             self._exec(build_args())
 
         btn.clicked.connect(run)
-        if need is not None:
-            need.returnPressed.connect(run)
+        for f in fields:
+            f.returnPressed.connect(run)
         return btn
 
     def _exec_arg(self, field: QLineEdit, build_args, confirm_title=None, confirm_body=None) -> None:

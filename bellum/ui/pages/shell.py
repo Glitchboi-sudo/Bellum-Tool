@@ -37,6 +37,9 @@ class ShellPage(Page):
         super().__init__(ctx, parent)
         self._history: list[str] = []
         self._hist_idx = 0
+        # Se avisa una sola vez si el shell del terminal parece bloqueado
+        # (comandos que salen con código 0 pero sin ninguna salida).
+        self._warned_locked = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(22, 18, 22, 22)
@@ -115,6 +118,20 @@ class ShellPage(Page):
         text = res.text.rstrip()
         if text:
             self._out.appendPlainText(text)
+        else:
+            self._out.appendPlainText("(sin salida)")
         if not res.ok:
             self._out.appendPlainText(f"[exit {res.returncode}]")
+        # Salida vacía con éxito: típico de un adbd de PAX con el shell
+        # restringido (acepta el servicio pero no devuelve nada). Se avisa una vez.
+        if res.ok and not text and not self._warned_locked:
+            self._warned_locked = True
+            self._out.appendPlainText(
+                "· El shell de este terminal parece restringido (sale sin datos). "
+                "En unidades de fábrica bloqueadas el `adb shell` está capado, pero "
+                "sí funcionan «Sistema PAX» (systool), «Resumen» y «Registros» (syslog)."
+            )
+            self.ctx.notify(
+                "Shell restringido en este terminal. Usa Sistema PAX / Registros.", "warn"
+            )
         self._out.appendPlainText("")

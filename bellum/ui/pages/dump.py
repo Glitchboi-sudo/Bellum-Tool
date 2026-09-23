@@ -23,12 +23,13 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPlainTextEdit,
     QVBoxLayout,
 )
 
 from ...core.adb import CommandResult
-from ..widgets import Card, Page, flow_row, hint, icon_button
+from ..widgets import Card, DangerCard, Page, flow_row, hint, icon_button
 
 # Ruta by-name típica de los PAX A910/A920 (SoC Unisoc). Editable: otros
 # modelos/plataformas exponen sus particiones bajo otra ruta.
@@ -92,6 +93,23 @@ class DumpPage(Page):
         dest.add(flow_row(QLabel("Carpeta PC:"), self._dest, browse, self._dump_btn))
         root.addWidget(dest)
 
+        # --- Volcado completo del eMMC (equivalente a `cdump`) -------------
+        emmc = DangerCard("Volcar eMMC completo (mmcblk0) — ⚠ imagen enorme")
+        emmc.add(
+            hint(
+                "Vuelca el disco entero del terminal a una imagen en el PC vía "
+                "`exec-out dd if=/dev/block/mmcblk0`. Puede ocupar varios GB y tardar mucho; "
+                "incluye TODAS las particiones (también material sensible). Solo sobre equipo "
+                "de tu propiedad."
+            )
+        )
+        self._emmc_dev = QLineEdit("/dev/block/mmcblk0")
+        self._emmc_btn = icon_button("download", ctx.palette.text, "Volcar eMMC ⚠")
+        self._emmc_btn.setObjectName("Danger")
+        self._emmc_btn.clicked.connect(self._dump_emmc)
+        emmc.add(flow_row(QLabel("Dispositivo:"), self._emmc_dev, self._emmc_btn))
+        root.addWidget(emmc)
+
         self._out = QPlainTextEdit()
         self._out.setObjectName("Console")
         self._out.setReadOnly(True)
@@ -107,9 +125,10 @@ class DumpPage(Page):
         name = name.strip()
         if not name:
             return
-        # Evita duplicados.
+        # Evita duplicados (se compara con el nombre exacto guardado en UserRole,
+        # no con la etiqueta visible, que puede llevar el sufijo «· sensible»).
         for i in range(self._parts.count()):
-            if self._parts.item(i).text().split("  ")[0] == name:
+            if self._parts.item(i).data(Qt.ItemDataRole.UserRole) == name:
                 return
         label = f"{name}  ·  sensible" if name in _SENSITIVE else name
         item = QListWidgetItem(label)
@@ -181,9 +200,11 @@ class DumpPage(Page):
 
         base = self._byname.text().strip() or _DEFAULT_BYNAME
         self._dump_btn.setEnabled(False)
-        self._out.appendPlainText(f"$ adb shell mkdir -p {_REMOTE_DIR}")
+        # Se limpia la carpeta antes de volcar: un intento previo abortado deja
+        # .img huérfanos que, si no, se colarían en el `adb pull` de esta tanda.
+        self._out.appendPlainText(f"$ adb shell rm -rf {_REMOTE_DIR} && mkdir -p {_REMOTE_DIR}")
         self.ctx.adb.shell(
-            f"mkdir -p {_REMOTE_DIR}",
+            f"rm -rf {_REMOTE_DIR} && mkdir -p {_REMOTE_DIR}",
             lambda _res: self._dd_next(base, parts, 0, dest),
         )
 
@@ -209,9 +230,58 @@ class DumpPage(Page):
 
     def _after_pull(self, res: CommandResult) -> None:
         self._log(res)
-        # Limpia las imágenes temporales del terminal (sin bloquear la UI).
-        self.ctx.adb.shell(f"rm -rf {_REMOTE_DIR}", None)
         self._dump_btn.setEnabled(True)
         if res.ok:
+            # Solo se borran las imágenes del terminal si la descarga fue bien;
+            # si el `pull` falló, se conservan para poder reintentarlo sin
+            # repetir todo el `dd` (sin bloquear la UI).
+            self.ctx.adb.shell(f"rm -rf {_REMOTE_DIR}", None)
             self._out.appendPlainText("✓ Volcado completado.\n")
             self.ctx.notify("Volcado descargado al PC.", "ok")
+        else:
+            self._out.appendPlainText(
+                f"✗ Falló la descarga. Las imágenes siguen en el terminal ({_REMOTE_DIR}); "
+                "puedes reintentar sin volver a volcar.\n"
+            )
+            self.ctx.notify("Falló la descarga; las imágenes siguen en el terminal.", "error")
+
+    # ---- volcado completo del eMMC (cdump) ---------------------------
+    def _confirm(self, title: str, body: str) -> bool:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle(title)
+        box.setText(body)
+        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        return box.exec() == QMessageBox.StandardButton.Yes
+
+    def _dump_emmc(self) -> None:
+        if not self.ctx.adb.serial:
+            self.ctx.notify("Sin dispositivo adb seleccionado.", "warn")
+            return
+        dev = self._emmc_dev.text().strip() or "/dev/block/mmcblk0"
+        if not self._confirm(
+            "Volcar eMMC completo",
+            f"Se volcará el disco entero ({dev}) a una imagen en el PC.\n\n"
+            "Puede ocupar varios GB y tardar bastante. ¿Continuar?",
+        ):
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Guardar imagen del eMMC", "mmcblk0.img", "Imagen (*.img);;Todos (*)"
+        )
+        if not path:
+            return
+        self._emmc_btn.setEnabled(False)
+        self._out.appendPlainText(f"$ adb exec-out dd if={dev} bs=4M  > {path}")
+
+        def done(res: CommandResult) -> None:
+            self._emmc_btn.setEnabled(True)
+            if res.ok and os.path.exists(path) and os.path.getsize(path) > 0:
+                mb = os.path.getsize(path) / (1024 * 1024)
+                self._out.appendPlainText(f"✓ eMMC volcado ({mb:.0f} MB) → {path}\n")
+                self.ctx.notify("eMMC volcado al PC.", "ok")
+            else:
+                self._out.appendPlainText(f"✗ Falló el volcado del eMMC. {res.stderr}\n")
+                self.ctx.notify("Falló el volcado del eMMC (¿shell sin root?).", "error")
+
+        self.ctx.adb.stream_to_file(["exec-out", "dd", f"if={dev}", "bs=4M"], path, done)

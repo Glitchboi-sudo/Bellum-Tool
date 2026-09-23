@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import gzip
 import os
+import posixpath
 
 from PySide6.QtCore import QBuffer, QIODevice, Qt
 from PySide6.QtGui import QImage
@@ -23,18 +24,24 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPlainTextEdit,
     QVBoxLayout,
 )
 
+from ...core import apk
 from ...core.adb import CommandResult
-from ..widgets import Card, Page, flow_row, hint, icon_button
+from ..widgets import Card, DangerCard, Page, flow_row, hint, icon_button
 
 # Parámetros del splash del PAX A910/A920, fieles al mkblsp original.
 _SPLASH_W, _SPLASH_H = 720, 1280
 _SPLASH_MAX_KB = 1024
 # Ruta de medios de personalización del cliente (destino del bootanimation.zip).
 _BOOTANIM_DIR = "/cache/customer/media/"
+# Nombre por defecto del helper on-device (PaySh); editable en la UI.
+_PAYSH_PKG = "com.pax.paysh"
+# Partición cruda del logo de arranque (A910/A920 Unisoc); editable en la UI.
+_LOGO_PART = "/dev/block/platform/sdio_emmc/by-name/logo"
 
 
 class PersonalizePage(Page):
@@ -98,6 +105,57 @@ class PersonalizePage(Page):
         anim.add(flow_row(QLabel("Destino:"), self._anim_dst, push_btn))
         root.addWidget(anim)
 
+        # --- Herramienta on-device (PaySh) ---------------------------------
+        # Reimplementa el «instalar PayDroid Tool en el terminal» del tool
+        # original. No se distribuye ningún APK propietario: se instala el que
+        # aporte el usuario, o se extrae de un terminal que ya lo tenga para
+        # reinstalarlo en otro (usa el mismo tránsito que la extracción de APKs).
+        helper = Card("Herramienta on-device (PaySh) · instalar / extraer")
+        helper.add(
+            hint(
+                "Instala en el terminal el APK del helper (equivalente a «instalar PayDroid Tool» "
+                "del tool original) o extrae el que ya tenga un terminal para reinstalarlo en otro. "
+                "Aporta tú el APK: no se incluye software propietario."
+            )
+        )
+        self._helper_apk = QLineEdit()
+        self._helper_apk.setPlaceholderText("APK del helper…")
+        helper_pick = icon_button("open", ctx.palette.text, "Elegir APK…")
+        helper_pick.clicked.connect(self._pick_helper)
+        install_btn = icon_button(
+            "run", ctx.palette.accent_text, "Instalar en el terminal", object_name="Primary"
+        )
+        install_btn.clicked.connect(self._install_helper)
+        helper.add(flow_row(QLabel("APK:"), self._helper_apk, helper_pick, install_btn))
+
+        self._paysh_pkg = QLineEdit(_PAYSH_PKG)
+        extract_btn = icon_button("save", ctx.palette.text, "Extraer del terminal…")
+        extract_btn.clicked.connect(self._extract_helper)
+        helper.add(flow_row(QLabel("Paquete:"), self._paysh_pkg, extract_btn))
+        root.addWidget(helper)
+
+        # --- Flashear splash.img al logo (equivalente a `spchge`) ----------
+        flash = DangerCard("Flashear splash.img al logo — ⚠ escribe partición")
+        flash.add(
+            hint(
+                "Escribe una splash.img sobre la partición cruda del logo (push → dd → rm). "
+                "Completa el flujo del BootLogo Maker. Una imagen de tamaño/formato incorrecto "
+                "puede dejar el logo inservible; requiere shell con acceso a /dev/block. "
+                "Haz antes un volcado de la partición «logo» por si necesitas revertir."
+            )
+        )
+        self._flash_img = QLineEdit()
+        self._flash_img.setPlaceholderText("splash.img (por defecto, el recién generado)…")
+        flash_pick = icon_button("open", ctx.palette.text, "Elegir .img…")
+        flash_pick.clicked.connect(self._pick_flash_img)
+        self._logo_part = QLineEdit(_LOGO_PART)
+        flash_btn = icon_button("flash", ctx.palette.text, "Flashear al logo ⚠")
+        flash_btn.setObjectName("Danger")
+        flash_btn.clicked.connect(self._flash_logo)
+        flash.add(flow_row(QLabel("Imagen:"), self._flash_img, flash_pick))
+        flash.add(flow_row(QLabel("Partición:"), self._logo_part, flash_btn))
+        root.addWidget(flash)
+
         self._out = QPlainTextEdit()
         self._out.setObjectName("Console")
         self._out.setReadOnly(True)
@@ -141,6 +199,10 @@ class PersonalizePage(Page):
             Qt.AspectRatioMode.IgnoreAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
+        # Fuerza BMP de 24 bits sin canal alfa (RGB888), como el splash.img
+        # original de mkblsp. Sin esto, una imagen con alfa se guardaría como BMP
+        # de 32 bits BGRA y el bootloader mostraría el logo corrupto o lo rechazaría.
+        scaled = scaled.convertToFormat(QImage.Format.Format_RGB888)
         buf = QBuffer()
         buf.open(QIODevice.OpenModeFlag.ReadWrite)
         if not scaled.save(buf, "BMP"):
@@ -191,3 +253,125 @@ class PersonalizePage(Page):
             return
         self._out.appendPlainText(f"$ adb push {src} {dst}")
         self.ctx.adb.run(["push", src, dst], self._log)
+
+    # ---- Herramienta on-device (PaySh) -------------------------------
+    def _pick_helper(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "APK del helper", "", "Android Package (*.apk);;Todos (*)"
+        )
+        if path:
+            self._helper_apk.setText(path)
+
+    def _install_helper(self) -> None:
+        if not self.ctx.adb.serial:
+            self.ctx.notify("Sin dispositivo adb seleccionado.", "warn")
+            return
+        path = self._helper_apk.text().strip()
+        if not path:
+            self.ctx.notify("Elige el APK del helper.", "warn")
+            return
+        if not os.path.isfile(path):
+            self.ctx.notify(f"No existe el archivo: {path}", "error")
+            return
+        self._out.appendPlainText(f"$ adb install -r -g {path}")
+
+        def after(res: CommandResult) -> None:
+            self._log(res)
+            ok = res.ok and "Success" in (res.text or "")
+            self.ctx.notify(
+                "Helper instalado en el terminal." if ok else "No se pudo instalar el helper.",
+                "ok" if ok else "error",
+            )
+
+        # -r reinstala conservando datos; -g concede permisos de runtime.
+        self.ctx.adb.run(["install", "-r", "-g", path], after, merge_stderr=True)
+
+    def _extract_helper(self) -> None:
+        if not self.ctx.adb.serial:
+            self.ctx.notify("Sin dispositivo adb seleccionado.", "warn")
+            return
+        pkg = self._paysh_pkg.text().strip()
+        if not pkg:
+            self.ctx.notify("Indica el nombre del paquete a extraer.", "warn")
+            return
+        dest = QFileDialog.getExistingDirectory(self, "Guardar APK en…")
+        if not dest:
+            return
+        self._out.appendPlainText(f"$ adb shell pm path {pkg} → pull")
+
+        def on_paths(paths: dict[str, list[str]]) -> None:
+            remotes = paths.get(pkg, [])
+            if not remotes:
+                self.ctx.notify(f"El terminal no tiene instalado {pkg}.", "warn")
+                return
+            jobs = []
+            for remote in remotes:
+                base = posixpath.basename(remote)
+                local = os.path.join(dest, f"{pkg}.apk" if len(remotes) == 1 else f"{pkg}-{base}")
+                jobs.append((remote, local))
+            total = len(jobs)
+            apk.stage_pull(
+                self.ctx.adb,
+                jobs,
+                lambda fail: self.ctx.notify(
+                    f"Extraer {pkg}: {total - fail}/{total} OK → {dest}", "ok" if not fail else "warn"
+                ),
+            )
+
+        apk.resolve_paths(self.ctx.adb, [pkg], on_paths)
+
+    # ---- Flashear splash.img al logo (spchge) ------------------------
+    def _confirm(self, title: str, body: str) -> bool:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle(title)
+        box.setText(body)
+        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        return box.exec() == QMessageBox.StandardButton.Yes
+
+    def _pick_flash_img(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "splash.img", "", "Imagen (*.img);;Todos (*)"
+        )
+        if path:
+            self._flash_img.setText(path)
+
+    def _flash_logo(self) -> None:
+        if not self.ctx.adb.serial:
+            self.ctx.notify("Sin dispositivo adb seleccionado.", "warn")
+            return
+        img = self._flash_img.text().strip() or self._splash_out
+        if not img or not os.path.isfile(img):
+            self.ctx.notify("Genera o elige una splash.img primero.", "warn")
+            return
+        part = self._logo_part.text().strip() or _LOGO_PART
+        if not self._confirm(
+            "Flashear logo",
+            f"Se escribirá:\n\n  {os.path.basename(img)}\n  → {part}\n\n"
+            "Modifica una partición del sistema en crudo (dd). Una imagen incorrecta puede "
+            "dejar el logo inservible. ¿Continuar?",
+        ):
+            return
+        remote = "/data/local/tmp/bellum_splash.img"
+        self._out.appendPlainText(f"$ adb push {img} {remote}")
+
+        def after_push(res: CommandResult) -> None:
+            self._log(res)
+            if not res.ok:
+                self.ctx.notify("No se pudo subir la imagen al terminal.", "error")
+                return
+            cmd = f"dd if={remote} of={part}"
+            self._out.appendPlainText(f"$ adb shell {cmd}")
+            self.ctx.adb.shell(cmd, after_dd)
+
+        def after_dd(res: CommandResult) -> None:
+            self._log(res)
+            self.ctx.adb.shell(f"rm -f {remote}", None)
+            if res.ok:
+                self._out.appendPlainText("✓ Logo flasheado. Se verá en el próximo arranque.\n")
+                self.ctx.notify("Logo flasheado en el terminal.", "ok")
+            else:
+                self.ctx.notify("Falló el flasheo del logo (¿shell sin acceso a /dev/block?).", "error")
+
+        self.ctx.adb.run(["push", img, remote], after_push)

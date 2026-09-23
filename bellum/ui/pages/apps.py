@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from ...core import apk
 from ...core.adb import CommandResult
 from ...core.models import KNOWN_PAX_PACKAGES, Package
 from ..app_detail_dialog import AppDetailDialog
@@ -504,54 +505,26 @@ class AppsPage(Page):
         if not dest:
             return
 
-        # Fase 1: resolver rutas remotas de cada paquete (pueden ser splits).
-        paths: dict[str, list[str]] = {}
-        state = {"pending": len(names)}
-
-        def on_path(name: str, res: CommandResult) -> None:
-            remotes = [
-                ln[len("package:"):].strip()
-                for ln in res.stdout.splitlines()
-                if ln.startswith("package:")
-            ]
-            paths[name] = remotes
-            state["pending"] -= 1
-            if state["pending"] == 0:
-                self._pull_apks(paths, dest)
-
-        for name in names:
-            self.ctx.adb.shell(f"pm path {name}", lambda r, n=name: on_path(n, r))
+        # Resolver rutas remotas (pueden ser splits) y descargar con tránsito
+        # por /data/local/tmp (ver core.apk: evita el bloqueo de sync sobre /data/app).
+        apk.resolve_paths(self.ctx.adb, names, lambda paths: self._pull_apks(paths, dest))
 
     def _pull_apks(self, paths: dict[str, list[str]], dest: str) -> None:
-        # Fase 2: descargar cada apk. Nombre plano: <pkg>.apk (o <pkg>-<base> en splits).
+        # Nombre plano: <pkg>.apk (o <pkg>-<base> en splits).
         jobs: list[tuple[str, str]] = []
         for name, remotes in paths.items():
-            if not remotes:
-                continue
             for remote in remotes:
                 base = posixpath.basename(remote)
-                if len(remotes) == 1:
-                    local = os.path.join(dest, f"{name}.apk")
-                else:
-                    local = os.path.join(dest, f"{name}-{base}")
+                local = os.path.join(dest, f"{name}.apk" if len(remotes) == 1 else f"{name}-{base}")
                 jobs.append((remote, local))
-
         if not jobs:
             self.ctx.notify("No se pudo resolver ninguna ruta de APK.", "warn")
             return
-
-        done = {"n": 0, "fail": 0}
         total = len(jobs)
-
-        def after(res: CommandResult) -> None:
-            done["n"] += 1
-            if not res.ok:
-                done["fail"] += 1
-            if done["n"] >= total:
-                ok = total - done["fail"]
-                self.ctx.notify(
-                    f"Extraer APK: {ok}/{total} OK → {dest}", "ok" if not done["fail"] else "warn"
-                )
-
-        for remote, local in jobs:
-            self.ctx.adb.run(["pull", remote, local], after)
+        apk.stage_pull(
+            self.ctx.adb,
+            jobs,
+            lambda fail: self.ctx.notify(
+                f"Extraer APK: {total - fail}/{total} OK → {dest}", "ok" if not fail else "warn"
+            ),
+        )

@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.adb import CommandResult
-from ..widgets import Card, Page, hint
+from ..widgets import DangerCard, Page, hint
 
 
 class RecyclePage(Page):
@@ -44,7 +44,7 @@ class RecyclePage(Page):
         root.addWidget(warn)
 
         # --- Acción principal: wipe completo en un paso ---
-        quick = Card("Restablecer terminal")
+        quick = DangerCard("Restablecer terminal")
         quick.add(
             hint(
                 "Borra userdata + cache y reinicia, todo de una vez. Es la vía habitual "
@@ -59,7 +59,7 @@ class RecyclePage(Page):
         root.addWidget(quick)
 
         # --- Paso a paso ---
-        steps = Card("Paso a paso")
+        steps = DangerCard("Paso a paso")
         steps.add(hint("O ejecuta cada operación por separado, en orden:"))
         steps.add(self._step_row(0, "Quitar tampered", "Quitar Tampered", self._remove_tampered))
         steps.add(self._step_row(1, "Reiniciar a bootloader", "Reiniciar", self._reboot_bootloader))
@@ -129,13 +129,28 @@ class RecyclePage(Page):
             "adbd desbloqueado en el terminal. ¿Continuar?",
         ):
             return
-        # Cada uninstall es un `adb shell pm uninstall …`. Antes se pasaba
-        # "shell pm uninstall --user 0" como UN token (argv[0] inválido para
-        # pax_adb) y no ejecutaba nada; ahora va por adb.shell() correctamente.
-        for pkg in self._TAMPER_PKGS:
-            cmd = f"pm uninstall --user 0 {pkg}"
-            self._out.appendPlainText(f"$ adb shell {cmd}")
-            self.ctx.adb.shell(cmd, self._log)
+        # Cada uninstall es un `adb shell pm uninstall …`. Van ENCADENADOS: cada
+        # uno espera a que termine el anterior (en su callback) en vez de dispararse
+        # todos a la vez. Disparar dos `adb shell` en ráfaga sobre el mismo
+        # dispositivo hacía que el segundo no llegara a ejecutarse.
+        self._uninstall_next(list(self._TAMPER_PKGS), 0)
+
+    def _uninstall_next(self, pkgs: list[str], i: int) -> None:
+        if i >= len(pkgs):
+            self.ctx.notify("Quitar tampered: completado.", "ok")
+            return
+        pkg = pkgs[i]
+        cmd = f"pm uninstall --user 0 {pkg}"
+        self._out.appendPlainText(f"[{i + 1}/{len(pkgs)}] $ adb shell {cmd}")
+
+        def after(res: CommandResult) -> None:
+            self._log(res)
+            # Se continúa con el siguiente aunque uno falle: `pm uninstall`
+            # devuelve 0 con «Failure» en texto, y el usuario querrá intentar el
+            # resto igualmente.
+            self._uninstall_next(pkgs, i + 1)
+
+        self.ctx.adb.shell(cmd, after)
 
     def _erase(self, part: str) -> None:
         if not self._confirm(
