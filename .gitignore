@@ -11,6 +11,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
+
+# Material de análisis / volcados locales (no forman parte del proyecto)
+Pax_Toolkit/
+pax_info_*.txt
 .eggs/
 build/
 dist/
