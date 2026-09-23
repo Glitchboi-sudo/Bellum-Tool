@@ -125,6 +125,12 @@ QFrame#Card {{
     background: {p.surface}; border: 1px solid {p.border}; border-radius: 14px;
 }}
 QLabel#CardTitle {{ font-size: 12.5px; font-weight: 700; color: {p.text_dim}; }}
+/* Tarjeta de acciones sensibles/destructivas: franja y título en rojo. */
+QFrame#DangerCard {{
+    background: {p.surface}; border: 1px solid {p.border};
+    border-left: 4px solid {p.danger}; border-radius: 14px;
+}}
+QLabel#DangerCardTitle {{ color: {p.danger}; font-size: 12.5px; font-weight: 800; letter-spacing: 0.04em; }}
 QLabel#Hint {{ color: {p.text_dim}; font-size: 12px; }}
 QLabel#Mono {{ font-family: "JetBrains Mono","Fira Code",monospace; }}
 QLabel#EmptyState {{ color: {p.text_dim}; font-size: 13px; padding: 28px 12px; }}
@@ -144,6 +150,33 @@ QPushButton#Primary:focus {{ border-color: {p.text}; }}
 QPushButton#Danger {{ background: transparent; border: 1px solid {p.danger}; color: {p.danger}; }}
 QPushButton#Danger:hover {{ background: {p.danger}; color: #ffffff; }}
 QPushButton#Danger:focus {{ border-color: {p.text}; }}
+/* Botón "enlace" plano (barra de actividad). */
+QPushButton#LinkBtn {{ background: transparent; border: none; color: {p.text_dim}; font-size: 12px; font-weight: 600; padding: 2px 8px; }}
+QPushButton#LinkBtn:hover {{ color: {p.accent}; }}
+QPushButton#LinkBtn:focus {{ color: {p.accent}; }}
+
+/* ---------- Chip de estado del dispositivo (barra superior) ---------- */
+QLabel#StateChip {{ font-size: 12px; font-weight: 700; padding: 4px 11px; border-radius: 999px; }}
+QLabel#StateChip[level="ok"] {{ color: {p.ok}; background: {p.ok_bg}; }}
+QLabel#StateChip[level="warn"] {{ color: {p.warn}; background: {p.warn_bg}; }}
+QLabel#StateChip[level="off"] {{ color: {p.neutral_fg}; background: {p.neutral_bg}; }}
+
+/* ---------- Barra de actividad (registro de comandos) ---------- */
+#ActivityBar {{ background: {p.surface}; border-top: 1px solid {p.border}; }}
+QLabel#Trace {{ color: {p.text_dim}; font-size: 12px; }}
+QLabel#LiveDot {{ color: {p.border}; font-size: 13px; }}
+QLabel#LiveDot[active="true"] {{ color: {p.ok}; }}
+
+/* ---------- Paleta de comandos (Ctrl+K) ---------- */
+QDialog#Palette {{ background: {p.surface}; border: 1px solid {p.border}; border-radius: 14px; }}
+#Palette QLineEdit {{
+    font-size: 15px; background: transparent; border: none;
+    border-bottom: 1px solid {p.border}; border-radius: 0; padding: 13px 16px;
+}}
+#Palette QLineEdit:focus {{ border: none; border-bottom: 1px solid {p.border}; }}
+#Palette QListWidget {{ background: transparent; border: none; padding: 6px; outline: none; }}
+#Palette QListWidget::item {{ padding: 9px 12px; border-radius: 8px; color: {p.text}; }}
+#Palette QListWidget::item:selected {{ background: {p.accent}; color: {p.accent_text}; }}
 
 /* ---------- Inputs ---------- */
 QLineEdit, QPlainTextEdit, QTextEdit {{
