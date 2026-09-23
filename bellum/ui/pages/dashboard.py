@@ -30,6 +30,15 @@ from ..widgets import (
 # como quepan y salta de línea (2-3 en ancho, 1 en estrecho).
 _CELL_W = 260
 
+# Etiqueta para un dato que el terminal reporta pero sin valor útil (no todo se
+# puede leer por ADB según el modelo/estado). Se muestra atenuado, no en blanco.
+_UNAVAILABLE = "no disponible"
+
+
+def _is_blank(val: str) -> bool:
+    """True si el valor de una propiedad no aporta dato real."""
+    return val.strip().lower() in ("", "null", "unknown")
+
 # Un solo comando compuesto para el estado del sistema (una ida y vuelta),
 # separado por un marcador que luego partimos.
 _MARK = "@@BELLUM@@"
@@ -249,13 +258,21 @@ class DashboardPage(Page):
         pal = self.ctx.palette
         shown = 0
         for key, label in _FEATURED:
-            val = props.get(key)
-            if not val:
+            # Clave ausente = alternativa que este modelo no expone (p. ej.
+            # pax.sn vs ro.serialno): se omite. Clave presente pero vacía/nula =
+            # el terminal la reportó sin dato: se muestra como «no disponible».
+            if key not in props:
                 continue
+            raw = props.get(key) or ""
+            blank = _is_blank(raw)
             name = QLabel(label)
             name.setStyleSheet(f"color:{pal.text_dim}; font-size:12px;")
-            value = QLabel(val)
-            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            value = QLabel(_UNAVAILABLE if blank else raw)
+            if blank:
+                value.setStyleSheet(f"color:{pal.text_dim}; font-style:italic;")
+                value.setToolTip("El terminal no devolvió este dato por ADB.")
+            else:
+                value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             value.setWordWrap(True)
             cell = QVBoxLayout()
             cell.setSpacing(1)
@@ -418,17 +435,9 @@ class DashboardPage(Page):
         if not path:
             return
         self._busy.show()
-
-        def done(text: str) -> None:
-            self._busy.hide()
-            try:
-                with open(path, "w", encoding="utf-8") as fh:
-                    fh.write(text)
-                self.ctx.notify(f"Info del terminal → {path}", "ok")
-            except OSError as exc:
-                self.ctx.notify(f"No se pudo guardar: {exc}", "error")
-
-        inventory.collect_info(self.ctx.adb, done)
+        inventory.dump_to_file(
+            self.ctx.adb, path, self.ctx.notify, on_finish=lambda _ok: self._busy.hide()
+        )
 
     # ---- exportar informe ----
     def _export_report(self) -> None:

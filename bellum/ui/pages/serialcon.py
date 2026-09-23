@@ -28,6 +28,9 @@ from ..widgets import Card, Page, flow_row, hint, icon_button
 _BAUDS = ["9600", "19200", "38400", "57600", "115200"]
 # Terminador de línea que se añade al comando enviado.
 _ENDINGS = [("CR (\\r)", "\r"), ("LF (\\n)", "\n"), ("CR+LF (\\r\\n)", "\r\n"), ("(ninguno)", "")]
+# Código de servicio fijo del SPC_Sender original (se envía sin terminador).
+# Efecto exacto no documentado (inferido: activa un modo de servicio).
+_SERVICE_CODE = "A*#*#*#!952701=#*#*#*"
 
 
 class SerialConsolePage(Page):
@@ -95,7 +98,11 @@ class SerialConsolePage(Page):
         self._send_btn.clicked.connect(self._send)
         clear = icon_button("remove", ctx.palette.text, "Limpiar")
         clear.clicked.connect(self._out.clear)
-        root.addWidget(flow_row(self._cmd, self._send_btn, clear))
+        # Preset: código de servicio fijo del SPC_Sender (se envía sin terminador).
+        self._svc_btn = icon_button("play", ctx.palette.text, "Código servicio (952701)")
+        self._svc_btn.setToolTip(f"Envía «{_SERVICE_CODE}» — efecto inferido (modo servicio)")
+        self._svc_btn.clicked.connect(self._send_service_code)
+        root.addWidget(flow_row(self._cmd, self._send_btn, self._svc_btn, clear))
 
         self._refresh_ports()
         self._update_controls()
@@ -201,6 +208,14 @@ class SerialConsolePage(Page):
         self._out.appendPlainText(f"» {cmd}")
         self._port.write((cmd + ending).encode())
         self._cmd.clear()
+
+    def _send_service_code(self) -> None:
+        """Envía el código de servicio fijo del SPC_Sender (sin terminador)."""
+        if not self._is_open():
+            self.ctx.notify("Abre un puerto primero.", "warn")
+            return
+        self._out.appendPlainText(f"» {_SERVICE_CODE}  (código de servicio)")
+        self._port.write(_SERVICE_CODE.encode())
 
     # ------------------------------------------------------------------
     def _update_controls(self) -> None:

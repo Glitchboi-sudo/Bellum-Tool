@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QRectF, QSettings, Qt, QTimer
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -11,7 +11,9 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -31,10 +33,12 @@ from .pages.logcat import LogcatPage
 from .pages.personalize import PersonalizePage
 from .pages.recycle import RecyclePage
 from .pages.screenshot import ScreenshotPage
+from .pages.security import PaquetesPage, PosturaPage, SuperficiePage
 from .pages.serialcon import SerialConsolePage
 from .pages.shell import ShellPage
 from .pages.systool import SystoolPage
 from .settings_dialog import SettingsDialog
+from .command_palette import CommandPalette, PaletteEntry
 from .widgets import AppContext, TabPage, scroll_wrap
 
 # Color de los iconos de la barra lateral: fija, porque el fondo de la
@@ -86,6 +90,8 @@ class MainWindow(QMainWindow):
         # Estado del sidebar responsivo (se colapsa a solo iconos si la ventana
         # es muy estrecha). None = aún sin aplicar; lo fija _apply_responsive.
         self._compact: bool | None = None
+        # Último listado de dispositivos, para el chip de estado de la barra superior.
+        self._devices: list[Device] = []
 
         self._settings = QSettings("bellum", "bellum_tool")
         self._migrate_settings()
@@ -111,13 +117,19 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._apply_theme()
 
-        self._adb.command_logged.connect(lambda c: self._trace.setText(f"↳ {c}"))
+        self._adb.command_logged.connect(self._on_command_logged)
+        self._adb.command_finished.connect(self._on_command_finished)
+        # Parpadeo del punto "en vivo": se apaga poco después de cada comando.
+        self._live_timer = QTimer(self)
+        self._live_timer.setSingleShot(True)
+        self._live_timer.timeout.connect(self._live_idle)
 
-        # Carga inicial + sondeo periódico de dispositivos.
-        self._poll = QTimer(self)
-        self._poll.setInterval(4000)
-        self._poll.timeout.connect(self._refresh_devices)
-        self._poll.start()
+        # Paleta de comandos: salto rápido a cualquier herramienta.
+        QShortcut(QKeySequence("Ctrl+K"), self, self._open_command_palette)
+
+        # Carga inicial de dispositivos. No hay sondeo periódico: la lista se
+        # refresca a demanda (botón «Actualizar», cambio de dispositivo, Wi-Fi)
+        # para no gastar recursos lanzando `devices -l` en bucle.
         QTimer.singleShot(0, self._initial_check)
 
     # ------------------------------------------------------------------
@@ -206,6 +218,9 @@ class MainWindow(QMainWindow):
                 item.setToolTip(page.title if compact else "")
         self._settings_btn.setText("" if compact else "  Ajustes")
         self._settings_btn.setToolTip("Ajustes" if compact else "")
+        # En estrecho, la etiqueta "Dispositivo:" sobra: el chip de estado y el
+        # combo ya comunican lo esencial y liberan ancho en la barra superior.
+        self._dev_label.setVisible(not compact)
         self._update_theme_button()
 
     def _build_main(self) -> QWidget:
@@ -248,7 +263,13 @@ class MainWindow(QMainWindow):
         self._wifi_btn = QPushButton("Wi-Fi…")
         self._wifi_btn.setToolTip("Conectar a un terminal por red (ADB inalámbrico)")
         self._wifi_btn.clicked.connect(self._open_wireless)
-        tl.addWidget(QLabel("Dispositivo:"))
+        # Chip de estado del dispositivo — visible desde cualquier página.
+        self._state_chip = QLabel("Sin dispositivo")
+        self._state_chip.setObjectName("StateChip")
+        self._state_chip.setProperty("level", "off")
+        tl.addWidget(self._state_chip)
+        self._dev_label = QLabel("Dispositivo:")
+        tl.addWidget(self._dev_label)
         tl.addWidget(self._device_combo)
         tl.addWidget(self._refresh_btn)
         tl.addWidget(self._wifi_btn)
@@ -302,6 +323,16 @@ class MainWindow(QMainWindow):
             ),
             TabPage(
                 self._ctx,
+                "Seguridad",
+                "warning",
+                [
+                    PosturaPage(self._ctx),
+                    SuperficiePage(self._ctx),
+                    PaquetesPage(self._ctx),
+                ],
+            ),
+            TabPage(
+                self._ctx,
                 "Mantenimiento",
                 "tools",
                 [
@@ -323,11 +354,50 @@ class MainWindow(QMainWindow):
                 item.setIcon(nav_icon)
             self._nav.addItem(item)
 
-        # traza de comandos (siempre visible, informativa, no de alerta)
+        # ---- Actividad: última traza siempre visible + registro desplegable ----
+        # Unifica en un solo sitio el flujo de comandos pax_adb (señal
+        # command_logged), en vez de repartirlo por consolas de cada página.
+        activity = QWidget()
+        activity.setObjectName("ActivityBar")
+        av = QVBoxLayout(activity)
+        av.setContentsMargins(0, 0, 0, 0)
+        av.setSpacing(0)
+
+        header = QWidget()
+        hl = QHBoxLayout(header)
+        hl.setContentsMargins(22, 6, 14, 6)
+        hl.setSpacing(8)
+        self._live_dot = QLabel("●")
+        self._live_dot.setObjectName("LiveDot")
+        self._live_dot.setProperty("active", False)
+        hl.addWidget(self._live_dot)
         self._trace = QLabel("Listo.")
-        self._trace.setContentsMargins(22, 6, 22, 6)
-        self._trace.setStyleSheet(f"color:{self._palette.text_dim}; font-size:12px;")
-        lay.addWidget(self._trace)
+        self._trace.setObjectName("Trace")
+        # No debe forzar el ancho de la barra: se recorta si el comando es largo.
+        self._trace.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._trace.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        hl.addWidget(self._trace, 1)
+        self._act_clear = QPushButton("Limpiar")
+        self._act_clear.setObjectName("LinkBtn")
+        self._act_clear.setFlat(True)
+        self._act_clear.setToolTip("Vaciar el registro de actividad")
+        self._act_clear.clicked.connect(self._clear_activity)
+        hl.addWidget(self._act_clear)
+        self._act_toggle = QPushButton("Mostrar registro")
+        self._act_toggle.setObjectName("LinkBtn")
+        self._act_toggle.setFlat(True)
+        self._act_toggle.clicked.connect(self._toggle_activity)
+        hl.addWidget(self._act_toggle)
+        av.addWidget(header)
+
+        self._activity_log = QPlainTextEdit()
+        self._activity_log.setObjectName("Console")
+        self._activity_log.setReadOnly(True)
+        self._activity_log.setMaximumHeight(150)
+        self._activity_log.setMaximumBlockCount(500)  # acota la memoria en sesiones largas
+        self._activity_log.setVisible(False)
+        av.addWidget(self._activity_log)
+        lay.addWidget(activity)
 
         self._nav.setCurrentRow(0)
         self._update_theme_button()
@@ -336,8 +406,57 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _apply_theme(self) -> None:
         self.setStyleSheet(theme.stylesheet(self._palette))
-        self._trace.setStyleSheet(f"color:{self._palette.text_dim}; font-size:12px;")
         self.setWindowIcon(_app_icon(self._palette.accent))
+
+    @staticmethod
+    def _restyle(w: QWidget) -> None:
+        """Re-aplica el QSS a `w` tras cambiar una propiedad dinámica (level/active)."""
+        w.style().unpolish(w)
+        w.style().polish(w)
+
+    # ---- actividad ----------------------------------------------------
+    def _on_command_logged(self, cmd: str) -> None:
+        self._trace.setText(f"↳ {cmd}")
+        self._activity_log.appendPlainText(f"$ {cmd}")
+        self._live_dot.setProperty("active", True)
+        self._restyle(self._live_dot)
+        self._live_timer.start(1200)
+
+    def _on_command_finished(self, code: int, text: str) -> None:
+        # Muestra en la traza global lo que devolvió el comando (no solo lo enviado).
+        out = (text or "").rstrip()
+        self._activity_log.appendPlainText(out if out else "(sin salida)")
+        if code != 0:
+            self._activity_log.appendPlainText(f"[exit {code}]")
+
+    def _live_idle(self) -> None:
+        self._live_dot.setProperty("active", False)
+        self._restyle(self._live_dot)
+
+    def _toggle_activity(self) -> None:
+        show = not self._activity_log.isVisible()
+        self._activity_log.setVisible(show)
+        self._act_toggle.setText("Ocultar registro" if show else "Mostrar registro")
+
+    def _clear_activity(self) -> None:
+        self._activity_log.clear()
+        self._trace.setText("Listo.")
+
+    def _update_state_chip(self) -> None:
+        """Refleja el estado del dispositivo seleccionado en el chip de la barra."""
+        serial = self._device_combo.currentData() or ""
+        dev = next((d for d in self._devices if d.serial == serial), None)
+        if dev is None:
+            text, level = "Sin dispositivo", "off"
+        elif dev.online:
+            text, level = "En línea", "ok"
+        elif dev.state == "unauthorized":
+            text, level = "No autorizado", "warn"
+        else:
+            text, level = dev.state.capitalize(), "off"
+        self._state_chip.setText(text)
+        self._state_chip.setProperty("level", level)
+        self._restyle(self._state_chip)
 
     def _update_theme_button(self) -> None:
         going_light = self._palette.name == "dark"
@@ -369,6 +488,33 @@ class MainWindow(QMainWindow):
         idx = self._stack.currentIndex()
         return self._pages[idx] if 0 <= idx < len(self._pages) else None
 
+    # ---- paleta de comandos (Ctrl+K) ----------------------------------
+    def _open_command_palette(self) -> None:
+        entries: list[PaletteEntry] = []
+        for i, page in enumerate(self._pages):
+            if isinstance(page, TabPage):
+                for j, sub in enumerate(page.subpages()):
+                    entries.append(PaletteEntry(sub.title, page.title, self._nav_to(i, j)))
+            else:
+                entries.append(PaletteEntry(page.title, "", self._nav_to(i, None)))
+        pal = CommandPalette(entries, self)
+        # Centrada horizontalmente y cerca del borde superior de la ventana.
+        geo = self.geometry()
+        pal.move(geo.center().x() - pal.width() // 2, geo.top() + 96)
+        pal.exec()
+
+    def _nav_to(self, index: int, sub_index: int | None):
+        """Devuelve una función que navega a la página `index` (y sub-pestaña)."""
+
+        def go() -> None:
+            self._nav.setCurrentRow(index)
+            if sub_index is not None:
+                page = self._pages[index]
+                if isinstance(page, TabPage):
+                    page.select_subpage(sub_index)
+
+        return go
+
     # ---- dispositivos -------------------------------------------------
     def _initial_check(self) -> None:
         if not self._adb.available:
@@ -384,6 +530,7 @@ class MainWindow(QMainWindow):
 
     def _on_devices(self, res: CommandResult) -> None:
         devices = Device.parse_devices(res.stdout)
+        self._devices = devices
         prev = self._adb.serial
 
         self._device_combo.blockSignals(True)
@@ -408,12 +555,14 @@ class MainWindow(QMainWindow):
         if new_serial != prev:
             self._adb.serial = new_serial
             self._broadcast_device_change()
+        self._update_state_chip()
 
     def _on_device_selected(self, _index: int) -> None:
         serial = self._device_combo.currentData() or ""
         if serial != self._adb.serial:
             self._adb.serial = serial
             self._broadcast_device_change()
+        self._update_state_chip()
 
     def _broadcast_device_change(self) -> None:
         for page in self._pages:
@@ -462,7 +611,6 @@ class MainWindow(QMainWindow):
         self._banner_timer.stop()
 
     def closeEvent(self, event):  # noqa: N802
-        self._poll.stop()
         for page in self._pages:
             if hasattr(page, "shutdown"):
                 page.shutdown()

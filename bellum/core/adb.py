@@ -76,6 +76,8 @@ class AdbService(QObject):
     serial_changed = Signal(str)  # "" si no hay dispositivo seleccionado
     # Registro de cada invocación, para una consola de log en la UI.
     command_logged = Signal(str)
+    # Resultado de cada comando (código de salida, texto), para la traza global.
+    command_finished = Signal(int, str)
 
     def __init__(self, binary: str | None = None, parent: QObject | None = None):
         super().__init__(parent)
@@ -178,8 +180,10 @@ class AdbService(QObject):
             except RuntimeError:
                 return
             proc.deleteLater()
+            result = CommandResult(args=full, returncode=code, stdout=out, stderr=err)
+            self.command_finished.emit(code, result.text)
             if on_finished:
-                on_finished(CommandResult(args=full, returncode=code, stdout=out, stderr=err))
+                on_finished(result)
 
         def _err(_error) -> None:
             # errorOccurred: fallo al lanzar (p.ej. binario ilegible).
@@ -191,6 +195,7 @@ class AdbService(QObject):
             except RuntimeError:
                 return
             proc.deleteLater()
+            self.command_finished.emit(-1, msg)
             if on_finished:
                 on_finished(CommandResult(args=full, returncode=-1, stderr=msg))
 
@@ -251,3 +256,62 @@ class AdbService(QObject):
         # adb une los argumentos con espacios; pasar el comando como un único
         # token preserva comillas y pipes tal cual los escribe el usuario.
         self.run(["shell", command], on_finished, merge_stderr=True)
+
+    # ---- streaming binario a fichero (volcados grandes) ----------------
+    def stream_to_file(
+        self,
+        args: list[str],
+        local_path: str,
+        on_finished: Callable[[CommandResult], None] | None = None,
+        *,
+        targeted: bool = True,
+    ) -> QProcess | None:
+        """Ejecuta un comando y vuelca su STDOUT crudo (binario) a `local_path`.
+
+        Para volcados grandes (p. ej. `exec-out dd if=/dev/block/mmcblk0`): el
+        stdout va directo al fichero, sin pasar por memoria ni decodificarse como
+        texto (que corrompería los bytes). Devuelve el QProcess (para cancelar).
+        """
+        if not self._binary:
+            if on_finished:
+                on_finished(CommandResult(args=args, returncode=-1,
+                                          stderr="No se encontró el binario pax_adb."))
+            return None
+        full = self._full_args(args, targeted)
+        proc = QProcess(self)
+        proc.setStandardOutputFile(local_path)  # stdout binario → fichero
+        proc.setProgram(self._binary)
+        proc.setArguments(full)
+        self._jobs.add(proc)
+        self.command_logged.emit("pax_adb " + " ".join(full) + f"  > {local_path}")
+
+        def _done(code: int, _status) -> None:
+            if self._shutting or proc not in self._jobs:
+                return
+            self._jobs.discard(proc)
+            try:
+                err = bytes(proc.readAllStandardError()).decode("utf-8", "replace")
+            except RuntimeError:
+                return
+            proc.deleteLater()
+            self.command_finished.emit(code, err or f"(volcado a {local_path})")
+            if on_finished:
+                on_finished(CommandResult(args=full, returncode=code, stderr=err))
+
+        def _err(_error) -> None:
+            if self._shutting or proc not in self._jobs:
+                return
+            self._jobs.discard(proc)
+            try:
+                msg = proc.errorString()
+            except RuntimeError:
+                return
+            proc.deleteLater()
+            self.command_finished.emit(-1, msg)
+            if on_finished:
+                on_finished(CommandResult(args=full, returncode=-1, stderr=msg))
+
+        proc.finished.connect(_done)
+        proc.errorOccurred.connect(_err)
+        proc.start()
+        return proc

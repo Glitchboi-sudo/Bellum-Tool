@@ -59,6 +59,29 @@ class Card(QFrame):
         return w
 
 
+class DangerCard(Card):
+    """Tarjeta para acciones sensibles o destructivas.
+
+    Franja roja a la izquierda y título en rojo: marca de un vistazo lo que toca
+    material de pago o borra datos, reforzando el límite de alcance. El
+    comportamiento (confirmación, campos parametrizados) lo pone cada página;
+    esto es solo el lenguaje visual común.
+    """
+
+    def __init__(self, title: str = "", subtitle: str = "", parent: QWidget | None = None):
+        super().__init__("", parent)
+        self.setObjectName("DangerCard")
+        if title:
+            head = QLabel(title.upper())
+            head.setObjectName("DangerCardTitle")
+            self.add(head)
+        if subtitle:
+            sub = QLabel(subtitle)
+            sub.setObjectName("Hint")
+            sub.setWordWrap(True)
+            self.add(sub)
+
+
 def badge(text: str, bg: str, fg: str) -> QLabel:
     """Chip de estado: fondo tintado + texto saturado del mismo tono.
 
@@ -358,6 +381,14 @@ class TabPage(Page):
         w = self._tabs.currentWidget()
         if isinstance(w, Page):
             w.on_shown()
+
+    # --- acceso a sub-páginas (para la paleta de comandos) ---
+    def subpages(self) -> list[Page]:
+        return self._subpages
+
+    def select_subpage(self, index: int) -> None:
+        if 0 <= index < self._tabs.count():
+            self._tabs.setCurrentIndex(index)
 
     def on_device_changed(self) -> None:
         # A todas: p. ej. Registros debe cortar el streaming aunque no sea la

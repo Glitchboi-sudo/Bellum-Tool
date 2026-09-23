@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from ...core import apk
 from ...core.adb import CommandResult
 from ...core.models import KNOWN_PAX_PACKAGES, Package
 from ..app_detail_dialog import AppDetailDialog
@@ -298,7 +299,7 @@ class AppsPage(Page):
             if vcode:
                 ver_item.setToolTip(f"versionCode {vcode}")
             self._table.setItem(i, 1, ver_item)
-            self._table.setItem(i, 2, QTableWidgetItem("Sistema" if p.system else "Usuario"))
+            self._table.setItem(i, 2, self._tipo_item(p, pal))
             state = QTableWidgetItem("Activado" if p.enabled else "Desactivado")
             if not p.enabled:
                 state.setForeground(Qt.GlobalColor.gray)
@@ -318,6 +319,40 @@ class AppsPage(Page):
             self._stack.setCurrentWidget(self._empty_no_match)
         else:
             self._stack.setCurrentWidget(self._table)
+
+    # Particiones que el servicio 'sync' suele poder leer (pull directo viable)
+    # frente a las de solo lectura, que en terminales bloqueados rechaza. Sirve
+    # de pista visual sobre qué APKs merece la pena intentar extraer.
+    _PULLABLE_ROOTS = ("/data",)
+    _READONLY_ROOTS = ("/system", "/vendor", "/product", "/oem")
+
+    @staticmethod
+    def _partition_root(code_path: str) -> str:
+        """Primer segmento de la ruta (p. ej. '/data', '/system', '/cache')."""
+        cp = (code_path or "").strip()
+        if not cp.startswith("/"):
+            return ""
+        return "/" + cp.lstrip("/").split("/", 1)[0]
+
+    def _tipo_item(self, p: Package, pal) -> QTableWidgetItem:
+        """Celda 'Tipo' con la partición como distintivo coloreado por extraibilidad."""
+        from PySide6.QtGui import QColor
+
+        root = self._partition_root(p.apk_path)
+        base = "Sistema" if p.system else "Usuario"
+        item = QTableWidgetItem(f"{base} · {root}" if root else base)
+        if root in self._PULLABLE_ROOTS:
+            item.setForeground(QColor(pal.ok))
+            tip = "Partición legible por 'sync': el pull directo suele funcionar."
+        elif root in self._READONLY_ROOTS:
+            item.setForeground(QColor(pal.text_dim))
+            tip = ("Partición de solo lectura: en terminales bloqueados el "
+                   "servicio 'sync' no puede leerla (extracción no viable).")
+        else:
+            item.setForeground(QColor(pal.warn))
+            tip = "Partición poco común: la extracción por 'sync' es incierta."
+        item.setToolTip(f"{p.apk_path or '(ruta desconocida)'}\n{tip}")
+        return item
 
     # ------------------------------------------------------------------
     def _selected(self) -> list[str]:
@@ -504,54 +539,45 @@ class AppsPage(Page):
         if not dest:
             return
 
-        # Fase 1: resolver rutas remotas de cada paquete (pueden ser splits).
+        # La ruta del APK ya viene en packages.xml (codePath), así que no hace falta
+        # `pm path` — clave en terminales con el shell bloqueado, donde `pm` no
+        # devuelve nada. Solo se cae a `pm path` para paquetes sin codePath conocido.
+        code_paths = {p.name: p.apk_path for p in self._packages}
         paths: dict[str, list[str]] = {}
-        state = {"pending": len(names)}
-
-        def on_path(name: str, res: CommandResult) -> None:
-            remotes = [
-                ln[len("package:"):].strip()
-                for ln in res.stdout.splitlines()
-                if ln.startswith("package:")
-            ]
-            paths[name] = remotes
-            state["pending"] -= 1
-            if state["pending"] == 0:
-                self._pull_apks(paths, dest)
-
+        unknown: list[str] = []
         for name in names:
-            self.ctx.adb.shell(f"pm path {name}", lambda r, n=name: on_path(n, r))
+            cp = code_paths.get(name, "")
+            if cp:
+                remote = cp if cp.endswith(".apk") else cp.rstrip("/") + "/base.apk"
+                paths[name] = [remote]
+            else:
+                unknown.append(name)
+
+        def finish(resolved: dict[str, list[str]]) -> None:
+            paths.update(resolved)
+            self._pull_apks(paths, dest)
+
+        if unknown:
+            apk.resolve_paths(self.ctx.adb, unknown, finish)
+        else:
+            finish({})
 
     def _pull_apks(self, paths: dict[str, list[str]], dest: str) -> None:
-        # Fase 2: descargar cada apk. Nombre plano: <pkg>.apk (o <pkg>-<base> en splits).
+        # Nombre plano: <pkg>.apk (o <pkg>-<base> en splits).
         jobs: list[tuple[str, str]] = []
         for name, remotes in paths.items():
-            if not remotes:
-                continue
             for remote in remotes:
                 base = posixpath.basename(remote)
-                if len(remotes) == 1:
-                    local = os.path.join(dest, f"{name}.apk")
-                else:
-                    local = os.path.join(dest, f"{name}-{base}")
+                local = os.path.join(dest, f"{name}.apk" if len(remotes) == 1 else f"{name}-{base}")
                 jobs.append((remote, local))
-
         if not jobs:
             self.ctx.notify("No se pudo resolver ninguna ruta de APK.", "warn")
             return
-
-        done = {"n": 0, "fail": 0}
         total = len(jobs)
-
-        def after(res: CommandResult) -> None:
-            done["n"] += 1
-            if not res.ok:
-                done["fail"] += 1
-            if done["n"] >= total:
-                ok = total - done["fail"]
-                self.ctx.notify(
-                    f"Extraer APK: {ok}/{total} OK → {dest}", "ok" if not done["fail"] else "warn"
-                )
-
-        for remote, local in jobs:
-            self.ctx.adb.run(["pull", remote, local], after)
+        apk.stage_pull(
+            self.ctx.adb,
+            jobs,
+            lambda fail: self.ctx.notify(
+                f"Extraer APK: {total - fail}/{total} OK → {dest}", "ok" if not fail else "warn"
+            ),
+        )

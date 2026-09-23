@@ -77,6 +77,15 @@ class DiagToolsPage(Page):
         dump_card.add(_row(QLabel("Servicio:"), self._service, view_btn, save_btn, stretch_index=1))
         root.addWidget(dump_card)
 
+        # --- recuperación de conexión (killserver) ---
+        conn_card = Card("Conexión ADB")
+        adb_btn = icon_button("refresh", ctx.palette.text, "Reiniciar servidor ADB")
+        adb_btn.setToolTip("pax_adb kill-server: recupera una conexión ADB atascada")
+        adb_btn.clicked.connect(self._restart_adb)
+        conn_card.add(_row(adb_btn))
+        conn_card.add(hint("Mata el servidor ADB del PC; se relanza solo al siguiente comando."))
+        root.addWidget(conn_card)
+
         self._out = QPlainTextEdit()
         self._out.setObjectName("Console")
         self._out.setReadOnly(True)
@@ -87,6 +96,16 @@ class DiagToolsPage(Page):
     def _log(self, res: CommandResult) -> None:
         self._out.appendPlainText((res.text or "(sin salida)").rstrip())
         self._out.appendPlainText("")
+
+    # ---- conexión ADB ----
+    def _restart_adb(self) -> None:
+        self._out.appendPlainText("$ pax_adb kill-server")
+
+        def after(res: CommandResult) -> None:
+            self._log(res)
+            self.ctx.notify("Servidor ADB reiniciado.", "ok")
+
+        self.ctx.adb.run(["kill-server"], after, targeted=False, merge_stderr=True)
 
     # ---- dumpsys ----
     def _run_dumpsys(self) -> None:

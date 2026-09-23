@@ -11,6 +11,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
+
+# Material de análisis / volcados locales (no forman parte del proyecto)
+Pax_Toolkit/
+pax_info_*.txt
+# Volcados de particiones / imágenes generadas (eMMC, splash, etc.)
+*.img
 .eggs/
 build/
 dist/
