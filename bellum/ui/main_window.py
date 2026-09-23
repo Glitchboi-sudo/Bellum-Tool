@@ -118,6 +118,7 @@ class MainWindow(QMainWindow):
         self._apply_theme()
 
         self._adb.command_logged.connect(self._on_command_logged)
+        self._adb.command_finished.connect(self._on_command_finished)
         # Parpadeo del punto "en vivo": se apaga poco después de cada comando.
         self._live_timer = QTimer(self)
         self._live_timer.setSingleShot(True)
@@ -126,11 +127,9 @@ class MainWindow(QMainWindow):
         # Paleta de comandos: salto rápido a cualquier herramienta.
         QShortcut(QKeySequence("Ctrl+K"), self, self._open_command_palette)
 
-        # Carga inicial + sondeo periódico de dispositivos.
-        self._poll = QTimer(self)
-        self._poll.setInterval(4000)
-        self._poll.timeout.connect(self._refresh_devices)
-        self._poll.start()
+        # Carga inicial de dispositivos. No hay sondeo periódico: la lista se
+        # refresca a demanda (botón «Actualizar», cambio de dispositivo, Wi-Fi)
+        # para no gastar recursos lanzando `devices -l` en bucle.
         QTimer.singleShot(0, self._initial_check)
 
     # ------------------------------------------------------------------
@@ -423,6 +422,13 @@ class MainWindow(QMainWindow):
         self._restyle(self._live_dot)
         self._live_timer.start(1200)
 
+    def _on_command_finished(self, code: int, text: str) -> None:
+        # Muestra en la traza global lo que devolvió el comando (no solo lo enviado).
+        out = (text or "").rstrip()
+        self._activity_log.appendPlainText(out if out else "(sin salida)")
+        if code != 0:
+            self._activity_log.appendPlainText(f"[exit {code}]")
+
     def _live_idle(self) -> None:
         self._live_dot.setProperty("active", False)
         self._restyle(self._live_dot)
@@ -605,7 +611,6 @@ class MainWindow(QMainWindow):
         self._banner_timer.stop()
 
     def closeEvent(self, event):  # noqa: N802
-        self._poll.stop()
         for page in self._pages:
             if hasattr(page, "shutdown"):
                 page.shutdown()

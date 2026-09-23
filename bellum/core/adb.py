@@ -76,6 +76,8 @@ class AdbService(QObject):
     serial_changed = Signal(str)  # "" si no hay dispositivo seleccionado
     # Registro de cada invocación, para una consola de log en la UI.
     command_logged = Signal(str)
+    # Resultado de cada comando (código de salida, texto), para la traza global.
+    command_finished = Signal(int, str)
 
     def __init__(self, binary: str | None = None, parent: QObject | None = None):
         super().__init__(parent)
@@ -178,8 +180,10 @@ class AdbService(QObject):
             except RuntimeError:
                 return
             proc.deleteLater()
+            result = CommandResult(args=full, returncode=code, stdout=out, stderr=err)
+            self.command_finished.emit(code, result.text)
             if on_finished:
-                on_finished(CommandResult(args=full, returncode=code, stdout=out, stderr=err))
+                on_finished(result)
 
         def _err(_error) -> None:
             # errorOccurred: fallo al lanzar (p.ej. binario ilegible).
@@ -191,6 +195,7 @@ class AdbService(QObject):
             except RuntimeError:
                 return
             proc.deleteLater()
+            self.command_finished.emit(-1, msg)
             if on_finished:
                 on_finished(CommandResult(args=full, returncode=-1, stderr=msg))
 
@@ -289,6 +294,7 @@ class AdbService(QObject):
             except RuntimeError:
                 return
             proc.deleteLater()
+            self.command_finished.emit(code, err or f"(volcado a {local_path})")
             if on_finished:
                 on_finished(CommandResult(args=full, returncode=code, stderr=err))
 
@@ -301,6 +307,7 @@ class AdbService(QObject):
             except RuntimeError:
                 return
             proc.deleteLater()
+            self.command_finished.emit(-1, msg)
             if on_finished:
                 on_finished(CommandResult(args=full, returncode=-1, stderr=msg))
 
