@@ -67,3 +67,34 @@ def _run(
         _run(adb, probes, i + 1, acc, on_done, on_progress)
 
     adb.run(args, after, merge_stderr=True)
+
+
+def dump_to_file(
+    adb: AdbService,
+    path: str,
+    notify: Callable[[str, str], None],
+    on_progress: Callable[[str], None] | None = None,
+    on_finish: Callable[[bool], None] | None = None,
+) -> None:
+    """Recoge el inventario y lo escribe en `path`.
+
+    Notifica el resultado con `notify(mensaje, nivel)` (`ok`/`error`) y, si se
+    pasa, invoca `on_finish(ok)` al terminar — para efectos de UI como ocultar un
+    indicador de progreso o registrar una línea de éxito. Comparte la escritura y
+    el manejo de errores entre el Dashboard y la página de Sistema PAX.
+    """
+
+    def done(text: str) -> None:
+        ok = True
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+        except OSError as exc:
+            ok = False
+            notify(f"No se pudo guardar: {exc}", "error")
+        else:
+            notify(f"Info del terminal → {path}", "ok")
+        if on_finish is not None:
+            on_finish(ok)
+
+    collect_info(adb, done, on_progress)
