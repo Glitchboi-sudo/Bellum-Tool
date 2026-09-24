@@ -135,6 +135,8 @@ jobs:
         run: |
           useradd -m builder
           cp packaging/PKGBUILD .
+          # Keep pkgver in sync with the package version (avoids drift vs .deb/.rpm).
+          sed -i "s#^pkgver=.*#pkgver=$(python -c 'import bellum; print(bellum.__version__)')#" PKGBUILD
           # Build straight from the checked-out tree instead of downloading a tag.
           sed -i "s#^source=.*#source=()#; s#^sha256sums=.*#sha256sums=()#" PKGBUILD
           sed -i 's#\$srcdir/Bellum-Tool-\$pkgver#\$startdir#g' PKGBUILD

@@ -1,6 +1,6 @@
 # Maintainer: Glitchboi-sudo
 pkgname=bellum-tool
-pkgver=0.3.0
+pkgver=1.1.0
 pkgrel=1
 pkgdesc="Native Linux (Qt6/PySide6) GUI to manage PAX PayDroid terminals over ADB"
 arch=('any')
