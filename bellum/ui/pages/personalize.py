@@ -17,10 +17,13 @@ from __future__ import annotations
 import gzip
 import os
 import posixpath
+import tempfile
+from pathlib import Path
 
 from PySide6.QtCore import QBuffer, QIODevice, Qt
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFileDialog,
     QLabel,
     QLineEdit,
@@ -29,7 +32,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from ...core import apk
+from ...core import apk, custres
 from ...core.adb import CommandResult
 from ..widgets import Card, DangerCard, Page, flow_row, hint, icon_button
 
@@ -47,6 +50,11 @@ _PAYSH_PKG = "com.pax.paysh"
 _PAYDROID_PKG = "com.pax.tsclear"
 _PAYDROID_APK = "/cache/customer/priv-app/paydroidtool/base.apk"
 _PAYDROID_ACTIVITY = "com.paxsz.paydroidtool.Activities.MainActivity"
+# Recursos customer-res empaquetados con Bellum (no versionados; ver .gitignore).
+# Instalar PaydroidTool = aplicar el .ac de paydroidtool; desinstalar = el «empty».
+_CUSTRES_DIR = str(Path(__file__).resolve().parents[3] / "resources" / "custres")
+_AC_INSTALL = "PayDroid_5.1.1_Aquarius_customer_res_paydroidtool.zip.ac"
+_AC_UNINSTALL = "PayDroid_5.1.1_Aquarius_customer_res_empty.zip.ac"
 # Partición cruda del logo de arranque (A910/A920 Unisoc); editable en la UI.
 _LOGO_PART = "/dev/block/platform/sdio_emmc/by-name/logo"
 
@@ -148,11 +156,11 @@ class PersonalizePage(Page):
         pdt = Card("PayDroid Tool · instalar · extraer · abrir")
         pdt.add(
             hint(
-                f"Agente on-device del tool oficial ({_PAYDROID_PKG}). Instalar y abrir van por "
-                "systool (canal propietario, sin depender del shell); extraer usa la ruta "
-                f"conocida ({_PAYDROID_APK}) por «sync». «Instalar» aquí necesita un APK suelto: "
-                "el oficial viene CIFRADO dentro del customer-res (.ac) — para ese usa la tarjeta "
-                "de abajo."
+                f"Agente on-device del tool oficial ({_PAYDROID_PKG}). Abrir va por systool "
+                "(canal propietario, sin depender del shell); extraer usa la ruta conocida "
+                f"({_PAYDROID_APK}) por «sync». «Instalar» aquí es para un APK suelto que aportes; "
+                "para instalar el PaydroidTool oficial completo usa «Instalar PaydroidTool» en la "
+                "tarjeta de abajo (MobileTool nativo)."
             )
         )
         self._pdt_apk = QLineEdit()
@@ -171,28 +179,45 @@ class PersonalizePage(Page):
         pdt.add(flow_row(pdt_extract, pdt_launch))
         root.addWidget(pdt)
 
-        # --- PayDroid Tool: aplicar customer-res (.ac) — vía real del tool ----
-        # El tool oficial no hace `install` de un APK suelto: aplica un paquete
-        # de recurso de cliente CIFRADO (.ac) que el daemon de PAX descifra y
-        # desempaqueta en el terminal (instalar = *_paydroidtool.ac; desinstalar
-        # = *_empty.ac, que reemplaza el recurso por uno vacío). Bellum trata el
-        # .ac como blob opaco: NO lo descifra ni lo abre. Es categoría `update`
-        # → riesgo de brick, por eso va en DangerCard con confirmación.
-        pdt_res = DangerCard("PayDroid Tool · aplicar customer-res (.ac) — ⚠ experimental")
+        # --- PayDroid Tool: instalar/desinstalar (MobileTool nativo) ----------
+        # Reimplementación NATIVA en Linux del «MobileTool» del tool oficial (que
+        # en Windows usa bpa.exe): Bellum descifra el customer-res cifrado (.ac),
+        # extrae el .zip firmado interior y lo aplica con `systool update resource`
+        # (verificado en un A910 → [SYSTOOL:0] ok). Instalar = recurso paydroidtool;
+        # desinstalar = recurso vacío (empty). Sin bpa.exe/wine ni re-firmado.
+        pdt_res = DangerCard("PayDroid Tool · instalar / desinstalar (MobileTool nativo)")
+        bundled = os.path.isfile(os.path.join(_CUSTRES_DIR, _AC_INSTALL))
         pdt_res.add(
             hint(
-                "Vía fiel del tool oficial: sube y aplica el paquete de recurso de cliente "
-                "cifrado por «systool update resource». Instalar = …_customer_res_paydroidtool.zip.ac; "
-                "desinstalar = …_customer_res_empty.zip.ac. El terminal puede reiniciarse al "
-                "terminar. ⚠ Es categoría update: un fichero incorrecto puede inutilizar recursos "
-                "del terminal. Bellum no descifra el .ac; solo lo entrega al daemon."
+                "Instala o desinstala PaydroidTool en el terminal aplicando el paquete "
+                "customer-res oficial (descifrado local + «systool update resource», sin "
+                "bpa.exe/wine). Instalar despliega los APKs en /cache/customer; desinstalar "
+                "aplica el recurso vacío. El terminal puede reiniciarse."
+                + ("" if bundled else
+                   "\n\n⚠ No encuentro los .ac en resources/custres/: usa «Aplicar .ac…» "
+                   "para elegir el paquete manualmente.")
             )
         )
+        pdt_do_install = icon_button(
+            "run", ctx.palette.accent_text, "Instalar PaydroidTool", object_name="Primary"
+        )
+        pdt_do_install.clicked.connect(
+            lambda: self._install_paydroid_native(os.path.join(_CUSTRES_DIR, _AC_INSTALL), "instalar")
+        )
+        pdt_do_uninstall = icon_button("remove", ctx.palette.text, "Desinstalar")
+        pdt_do_uninstall.setObjectName("Danger")
+        pdt_do_uninstall.clicked.connect(
+            lambda: self._install_paydroid_native(os.path.join(_CUSTRES_DIR, _AC_UNINSTALL), "desinstalar")
+        )
+        self._pdt_reboot = QCheckBox("Reiniciar el terminal tras aplicar")
+        pdt_res.add(flow_row(pdt_do_install, pdt_do_uninstall, self._pdt_reboot))
+
+        # Aplicar un .ac cualquiera (otro recurso de cliente que el operador controle).
         self._pdt_res = QLineEdit()
         self._pdt_res.setPlaceholderText("customer_res *.ac (paydroidtool = instalar · empty = desinstalar)…")
         pdt_res_pick = icon_button("open", ctx.palette.text, "Elegir .ac…")
         pdt_res_pick.clicked.connect(self._pick_pdt_res)
-        pdt_res_apply = icon_button("flash", ctx.palette.text, "Aplicar customer-res ⚠")
+        pdt_res_apply = icon_button("flash", ctx.palette.text, "Aplicar .ac ⚠")
         pdt_res_apply.setObjectName("Danger")
         pdt_res_apply.clicked.connect(self._apply_pdt_res)
         pdt_res.add(flow_row(QLabel("Recurso:"), self._pdt_res, pdt_res_pick, pdt_res_apply))
@@ -462,49 +487,74 @@ class PersonalizePage(Page):
         self.ctx.adb.run(args, after, merge_stderr=True)
 
     def _pick_pdt_res(self) -> None:
+        start = _CUSTRES_DIR if os.path.isdir(_CUSTRES_DIR) else ""
         path, _ = QFileDialog.getOpenFileName(
-            self, "Paquete customer-res (.ac)", "",
-            "Recurso PAX (*.ac *.zip);;Todos (*)",
+            self, "Paquete customer-res (.ac)", start,
+            "Recurso PAX (*.ac);;Todos (*)",
         )
         if path:
             self._pdt_res.setText(path)
 
     def _apply_pdt_res(self) -> None:
-        if not self.ctx.adb.serial:
-            self.ctx.notify("Sin dispositivo adb seleccionado.", "warn")
-            return
         path = self._pdt_res.text().strip()
         if not path:
             self.ctx.notify("Elige el paquete customer-res (.ac).", "warn")
             return
-        if not os.path.isfile(path):
-            self.ctx.notify(f"No existe el archivo: {path}", "error")
+        accion = "desinstalar" if "empty" in os.path.basename(path).lower() else "instalar"
+        self._install_paydroid_native(path, accion)
+
+    def _install_paydroid_native(self, ac_path: str, accion: str) -> None:
+        """MobileTool nativo: descifra el .ac y aplica el recurso por systool.
+
+        `accion` = "instalar" | "desinstalar" (solo para textos y el aviso).
+        """
+        if not self.ctx.adb.serial:
+            self.ctx.notify("Sin dispositivo adb seleccionado.", "warn")
             return
-        name = os.path.basename(path)
-        accion = "DESINSTALAR" if "empty" in name.lower() else "INSTALAR"
+        if not os.path.isfile(ac_path):
+            self.ctx.notify(f"No encuentro el paquete customer-res: {ac_path}", "error")
+            return
+        name = os.path.basename(ac_path)
         if not self._confirm(
-            "Aplicar customer-res — ⚠ experimental",
-            f"Se aplicará por «systool update resource» (acción prevista: {accion}):\n\n"
+            f"PayDroid Tool — {accion}",
+            f"Se va a {accion.upper()} PaydroidTool en el terminal aplicando el recurso:\n\n"
             f"  {name}\n\n"
-            "Es categoría update: el daemon de PAX descifra y reescribe recursos del "
-            "terminal, que puede reiniciarse. Un fichero equivocado puede dejar recursos "
-            "inservibles. Úsalo solo con el .ac oficial y en equipo de tu propiedad. ¿Continuar?",
+            "Bellum lo descifra en local y lo aplica por «systool update resource» (recurso "
+            "firmado por PAX). Escribe en /cache/customer y el terminal puede reiniciarse. "
+            "Úsalo solo en equipo de tu propiedad. ¿Continuar?",
         ):
             return
-        # pax_adb sube el .ac (último arg de un subcomando 'update') y el daemon
-        # lo aplica; Bellum no toca su cifrado.
-        self._out.appendPlainText(f"$ pax_adb systool update resource {path}")
 
-        def after(res: CommandResult) -> None:
-            self._log(res)
-            ok = res.ok and "SYSTOOL:-" not in (res.text or "")
-            self.ctx.notify(
-                f"customer-res aplicado ({accion.lower()}). El terminal puede reiniciarse." if ok
-                else "No se pudo aplicar el customer-res.",
-                "ok" if ok else "error",
+        reboot = self._pdt_reboot.isChecked()
+        sig_path = os.path.join(tempfile.gettempdir(), "bellum_custres_sig.zip")
+        self._out.appendPlainText(f"$ descifrando {name} (AES-256-CBC, local)…")
+
+        def after_decrypt(ok: bool, msg: str) -> None:
+            if not ok:
+                self._out.appendPlainText(f"[error] {msg}\n")
+                self.ctx.notify(f"No se pudo descifrar el customer-res: {msg}", "error")
+                return
+            self._out.appendPlainText(f"$ pax_adb systool update resource {msg}")
+            self.ctx.adb.run(
+                ["systool", "update", "resource", msg], after_apply, merge_stderr=True
             )
 
-        self.ctx.adb.run(["systool", "update", "resource", path], after, merge_stderr=True)
+        def after_apply(res: CommandResult) -> None:
+            self._log(res)
+            try:
+                os.remove(sig_path)
+            except OSError:
+                pass
+            good = res.ok and "SYSTOOL:-" not in (res.text or "")
+            if not good:
+                self.ctx.notify(f"No se pudo {accion} PaydroidTool.", "error")
+                return
+            self.ctx.notify(f"PaydroidTool: {accion} aplicado ([SYSTOOL:0] ok).", "ok")
+            if reboot:
+                self._out.appendPlainText("$ pax_adb systool reboot")
+                self.ctx.adb.run(["systool", "reboot"], self._log, merge_stderr=True)
+
+        custres.decrypt_ac(self, ac_path, sig_path, after_decrypt)
 
     # ---- Flashear splash.img al logo (spchge) ------------------------
     def _confirm(self, title: str, body: str) -> bool:

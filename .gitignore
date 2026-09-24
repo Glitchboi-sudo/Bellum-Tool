@@ -14,9 +14,12 @@ __pycache__/
 
 # Material de análisis / volcados locales (no forman parte del proyecto)
 Pax_Toolkit/
-pax_info_*.txt
+pax_info*.txt
 # Volcados de particiones / imágenes generadas (eMMC, splash, etc.)
 *.img
+# Recursos propietarios de PAX (customer-res cifrados). NUNCA publicar.
+*.ac
+resources/custres/
 .eggs/
 build/
 dist/
